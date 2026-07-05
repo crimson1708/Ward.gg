@@ -1,36 +1,96 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Ward 🟥
 
-## Getting Started
+A VLR.gg-style website for **League of Legends esports** — match schedules, results, and detailed per-game box scores (KDA, CS, gold, champions), pulled from the public LoL Esports API into a local database.
 
-First, run the development server:
+Built with **Next.js 16 + TypeScript + Prisma + SQLite**.
 
+---
+
+## What it does
+
+- **Schedule & results** on the homepage — live, upcoming, and completed matches across every league.
+- **Match detail pages** — click any completed match to see each game's full box score, per player.
+- All data lives in a **local SQLite database** that you populate from the API with a couple of commands.
+
+---
+
+## Running it on your machine
+
+### Prerequisites
+- **Node.js 20 or newer** (check with `node --version`)
+- **Git**
+
+### 1. Clone the repo
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone <THE-REPO-URL>
+cd lolesports-site
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Install dependencies
+```bash
+npm install
+```
+This also auto-generates the Prisma database client (via a `postinstall` step).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 3. Create the database
+```bash
+npm run setup:db
+```
+This creates a local `dev.db` SQLite file and builds all the tables. (The database file is not in git — everyone builds their own.)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 4. Load real data from the API
+```bash
+npm run refresh
+```
+This fetches leagues, teams, matches, and per-game stats from the LoL Esports API and fills your database. Takes a minute or two. **The database starts empty — this step is what puts matches on the site.**
 
-## Learn More
+### 5. Start the site
+```bash
+npm run dev
+```
+Open **http://localhost:3000**. Click a completed match to see its stats.
 
-To learn more about Next.js, take a look at the following resources:
+---
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Keeping the data fresh
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The site reads from your local database, which is a **snapshot** — it does not update on its own. When scores look stale or a finished match shows no stats, re-run:
 
-## Deploy on Vercel
+```bash
+npm run refresh
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Command | What it updates |
+|---|---|
+| `npm run ingest` | Matches, scores, statuses, teams (fast) |
+| `npm run ingest:games` | Per-game box scores + players (slower) |
+| `npm run refresh` | **Both** — use this |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+---
+
+## How it's put together
+
+```
+app/                     Next.js pages (folder = route)
+  page.tsx               homepage: schedule + results
+  matches/[id]/page.tsx  match detail: games + box scores
+  layout.tsx             site header, shared on every page
+  globals.css            styling
+lib/
+  prisma.ts              the single database connection
+  lolEsports.ts          typed client for the LoL Esports API
+scripts/
+  ingest.mts             fetches schedule -> database
+  ingest-games.mts       fetches per-game stats -> database
+prisma/
+  schema.prisma          the database schema (source of truth)
+  migrations/            schema history
+```
+
+**How data flows:** `LoL Esports API` → ingestion scripts (`scripts/`) → SQLite database → Next.js pages read the DB and render HTML.
+
+---
+
+## Notes
+- The LoL Esports API is **unofficial and undocumented** — endpoints may change without notice. It needs no signup (a public key is baked into `lib/lolEsports.ts`).
+- SQLite means zero database setup — the whole DB is the single `dev.db` file. Delete it and re-run steps 3–4 to start fresh.
