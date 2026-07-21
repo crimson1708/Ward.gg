@@ -4,6 +4,13 @@
 // It is IDEMPOTENT: every write is an "upsert" (insert if new, update if it
 // already exists), keyed on the API's own id. Run it 100 times → no duplicates,
 // just fresh data. That's the whole trick to a re-runnable data pipeline.
+//
+// Split into two independently-callable pieces (see app/api/refresh*) because
+// they have very different natural update cadences: leagues/tournaments
+// barely ever change, while match status (unstarted -> inProgress ->
+// completed) needs to be checked often to catch a match going live promptly.
+// runScheduleIngest() below just runs both, for the CLI/GitHub Actions path
+// where that distinction doesn't matter.
 
 import { pathToFileURL } from "node:url";
 import { prisma } from "../lib/prisma.ts";
@@ -18,8 +25,9 @@ function slugify(text: string): string {
     .replace(/(^-|-$)/g, "");
 }
 
-export async function runScheduleIngest() {
-  // ── 1. LEAGUES ──────────────────────────────────────────────────────────
+// ── LEAGUES + TOURNAMENTS — the slow, external-API-heavy half (40+ calls to
+//    Riot, one per league). Rarely changes, so this can run on a long cadence. ──
+export async function runLeagueSync() {
   const leagues = await getLeagues();
   for (const l of leagues) {
     await prisma.league.upsert({
@@ -30,52 +38,63 @@ export async function runScheduleIngest() {
   }
   console.log(`Leagues upserted: ${leagues.length}`);
 
-  // Build slug -> our leagueId map so we can link matches without re-querying.
   const leagueRows = await prisma.league.findMany();
-  const leagueIdBySlug = new Map(leagueRows.map((l) => [l.slug, l.id]));
 
-  // ── 2. TOURNAMENTS (splits/stages, with their date ranges) ────────────────
-  // Only their date range matters to us right now — it's what lets the
-  // homepage show "ongoing events" the way VLR does. The API returns a
-  // league's ENTIRE tournament history (some go back to 2013), newest first,
-  // so we stop as soon as we reach ones that ended a while ago rather than
-  // re-upserting a decade of irrelevant splits on every run.
+  // The API returns a league's ENTIRE tournament history (some go back to
+  // 2013), newest first, so we stop as soon as we reach ones that ended a
+  // while ago rather than re-upserting a decade of irrelevant splits.
   const TOURNAMENT_CUTOFF_MS = Date.now() - 60 * 24 * 60 * 60 * 1000; // 60 days ago
-  // Also keep each league's tournament date ranges around in memory so the
-  // match loop below can figure out which split/tournament a match belongs
-  // to (the schedule feed gives no tournament id directly — just a league).
-  // The fetches themselves are the slow part (44+ sequential external calls
-  // added up to over a minute) — they're independent read-only requests, so
-  // fire them all concurrently. The upserts that follow stay sequential,
-  // since SQLite/libSQL serializes writes anyway and there's no benefit to
-  // parallelizing those.
+
+  // The fetches themselves are read-only and independent, so fire them all
+  // concurrently — sequential was 44+ round trips adding up to over a minute.
   const tournamentLists = await Promise.all(
     leagueRows.map(async (l) => ({ league: l, tournaments: await getTournamentsForLeague(l.externalId) }))
   );
 
-  const tournamentsByLeague = new Map<number, { id: number; startDate: Date; endDate: Date }[]>();
   let tournamentCount = 0;
   for (const { league: l, tournaments } of tournamentLists) {
-    const list: { id: number; startDate: Date; endDate: Date }[] = [];
     for (const t of tournaments) {
       if (new Date(t.endDate).getTime() < TOURNAMENT_CUTOFF_MS) break;
-      const startDate = new Date(t.startDate);
-      const endDate = new Date(t.endDate);
-      const row = await prisma.tournament.upsert({
+      await prisma.tournament.upsert({
         where: { externalId: t.id },
-        update: { name: t.slug, startDate, endDate },
-        create: { externalId: t.id, name: t.slug, slug: t.slug, leagueId: l.id, startDate, endDate },
+        update: { name: t.slug, startDate: new Date(t.startDate), endDate: new Date(t.endDate) },
+        create: {
+          externalId: t.id,
+          name: t.slug,
+          slug: t.slug,
+          leagueId: l.id,
+          startDate: new Date(t.startDate),
+          endDate: new Date(t.endDate),
+        },
       });
-      list.push({ id: row.id, startDate, endDate });
       tournamentCount++;
     }
-    tournamentsByLeague.set(l.id, list);
   }
   console.log(`Tournaments upserted: ${tournamentCount}`);
+
+  return { leagues: leagues.length, tournaments: tournamentCount };
+}
+
+// ── MATCH SCHEDULE — the frequent half. Reads leagues/tournaments back OUT of
+//    our own DB (no external calls needed for those — runLeagueSync already
+//    keeps them fresh on its own cadence) and syncs teams + match status. ──
+export async function runMatchScheduleSync() {
+  const leagueRows = await prisma.league.findMany();
+  const leagueIdBySlug = new Map(leagueRows.map((l) => [l.slug, l.id]));
 
   // Tournament dates are day-only, so give the end date a day of slack —
   // otherwise a match played late on the split's last calendar day could
   // fall just outside the range.
+  const tournamentRows = await prisma.tournament.findMany({
+    where: { startDate: { not: null }, endDate: { not: null } },
+  });
+  const tournamentsByLeague = new Map<number, { id: number; startDate: Date; endDate: Date }[]>();
+  for (const t of tournamentRows) {
+    if (!t.startDate || !t.endDate) continue;
+    const list = tournamentsByLeague.get(t.leagueId) ?? [];
+    list.push({ id: t.id, startDate: t.startDate, endDate: t.endDate });
+    tournamentsByLeague.set(t.leagueId, list);
+  }
   function findTournamentId(leagueId: number, matchStart: Date): number | null {
     const list = tournamentsByLeague.get(leagueId);
     if (!list) return null;
@@ -85,7 +104,6 @@ export async function runScheduleIngest() {
     return hit ? hit.id : null;
   }
 
-  // ── 3. MATCHES (and the teams inside them) ────────────────────────────────
   const events = await getSchedule();
   let matchCount = 0;
   let skipped = 0;
@@ -102,6 +120,13 @@ export async function runScheduleIngest() {
     teamCache.set(slug, row);
     return row;
   }
+
+  // Team resolution stays sequential (cheap thanks to the cache above, and it
+  // has to be — concurrent upserts of the same not-yet-cached team would
+  // race). The match upsert itself always targets a distinct row per event,
+  // though, so those are safe to fire in bounded-concurrency batches.
+  const MATCH_UPSERT_CONCURRENCY = 10;
+  let pending: Promise<void>[] = [];
 
   for (const e of events) {
     // Skip non-match rows (e.g. "show" segments) and unknown leagues.
@@ -128,34 +153,48 @@ export async function runScheduleIngest() {
     const startTime = new Date(e.startTime);
     const tournamentId = findTournamentId(leagueId, startTime);
     const blockName = e.blockName ?? null;
+    const matchId = e.match.id;
+    const strategyCount = e.match.strategy.count;
+    const state = e.state;
 
-    await prisma.match.upsert({
-      where: { externalId: e.match.id },
-      // On update we refresh only the things that change over a match's life.
-      update: { status: e.state, scoreA, scoreB, winnerTeamId, startTime, tournamentId, blockName },
-      create: {
-        externalId: e.match.id,
-        leagueId,
-        tournamentId,
-        startTime,
-        status: e.state,
-        bestOf: e.match.strategy.count,
-        blockName,
-        teamAId: teamA.id,
-        teamBId: teamB.id,
-        scoreA,
-        scoreB,
-        winnerTeamId,
-      },
-    });
-    matchCount++;
+    pending.push(
+      prisma.match
+        .upsert({
+          where: { externalId: matchId },
+          // On update we refresh only the things that change over a match's life.
+          update: { status: state, scoreA, scoreB, winnerTeamId, startTime, tournamentId, blockName },
+          create: {
+            externalId: matchId,
+            leagueId,
+            tournamentId,
+            startTime,
+            status: state,
+            bestOf: strategyCount,
+            blockName,
+            teamAId: teamA.id,
+            teamBId: teamB.id,
+            scoreA,
+            scoreB,
+            winnerTeamId,
+          },
+        })
+        .then(() => {
+          matchCount++;
+        })
+    );
+
+    if (pending.length >= MATCH_UPSERT_CONCURRENCY) {
+      await Promise.all(pending);
+      pending = [];
+    }
   }
+  if (pending.length) await Promise.all(pending);
 
   console.log(`Matches upserted: ${matchCount}  (skipped ${skipped} non-match/placeholder rows)`);
   const teamCount = await prisma.team.count();
   console.log(`Teams in DB now: ${teamCount}`);
 
-  return { leagues: leagues.length, tournaments: tournamentCount, matches: matchCount, skipped, teams: teamCount };
+  return { matches: matchCount, skipped, teams: teamCount };
 }
 
 async function upsertTeam(t: { name: string; code: string; image: string }) {
@@ -167,9 +206,17 @@ async function upsertTeam(t: { name: string; code: string; image: string }) {
   });
 }
 
+// Runs both halves — used by the CLI entrypoint and GitHub Actions, neither
+// of which cares about splitting the two update cadences apart.
+export async function runScheduleIngest() {
+  const leagueResult = await runLeagueSync();
+  const matchResult = await runMatchScheduleSync();
+  return { ...leagueResult, ...matchResult };
+}
+
 // Only run as a CLI entrypoint when invoked directly (`tsx scripts/ingest.mts`) —
-// not when imported by the API route, which calls runScheduleIngest() itself
-// and manages its own process lifecycle.
+// not when imported by the API routes, which call the functions above
+// themselves and manage their own process lifecycle.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   runScheduleIngest()
     .then(() => prisma.$disconnect())

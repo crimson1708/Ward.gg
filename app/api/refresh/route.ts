@@ -4,12 +4,13 @@
 // randoms; the ingestion functions themselves live in scripts/*.mts and are
 // shared between this route and their CLI entrypoints.
 //
-// This is the FAST half — stale-match reconciliation, box scores for newly
-// completed games, and news. It deliberately excludes the league/tournament/
-// schedule sync (see /api/refresh/schedule), which is much slower (40+
-// sequential-ish external calls) and doesn't need to run every few minutes
-// anyway — leagues and tournaments rarely change, and match status/results
-// for anything already in the DB are handled here regardless.
+// This is the FASTEST/most frequent tier — stale-match reconciliation (fixes
+// matches that fell out of Riot's schedule-feed window while still
+// unresolved) and box scores for newly completed games, plus news. Match
+// status/schedule syncing itself (catching a match going live) lives in
+// /api/refresh/matches instead — it's too slow on its own (~30s) to also
+// bundle into a 2-minute cadence. Leagues/tournaments are slower still and
+// live in /api/refresh/schedule, on the slowest cadence of the three.
 //
 // Call with:  GET /api/refresh?secret=<REFRESH_SECRET>
 // or:         GET /api/refresh  with header  x-refresh-secret: <REFRESH_SECRET>

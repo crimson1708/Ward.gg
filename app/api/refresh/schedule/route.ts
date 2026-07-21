@@ -1,13 +1,15 @@
-// The SLOW half of the refresh pipeline — leagues, tournaments, and the match
-// schedule itself. Separate from /api/refresh so it can run on its own, less
-// frequent cadence (this does dozens of external API calls even after
-// parallelizing them, so it's meaningfully slower than the fast endpoint).
+// The SLOW half of the refresh pipeline — just leagues + tournaments (40+
+// external calls to Riot even parallelized). Separate from /api/refresh so it
+// can run on its own, infrequent cadence — this data barely ever changes, and
+// match status/schedule syncing (the part that actually needs to be frequent)
+// lives in the fast endpoint instead, reading leagues/tournaments back out of
+// our own DB rather than depending on this route having just run.
 //
 // Call with:  GET /api/refresh/schedule?secret=<REFRESH_SECRET>
 // or:         GET /api/refresh/schedule  with header  x-refresh-secret: <REFRESH_SECRET>
 
 import { NextRequest, NextResponse } from "next/server";
-import { runScheduleIngest } from "@/scripts/ingest.mts";
+import { runLeagueSync } from "@/scripts/ingest.mts";
 import { checkRefreshSecret } from "@/lib/refreshAuth.ts";
 
 export const runtime = "nodejs";
@@ -20,7 +22,7 @@ export async function GET(req: NextRequest) {
 
   const startedAt = Date.now();
   try {
-    const schedule = await runScheduleIngest();
+    const schedule = await runLeagueSync();
     return NextResponse.json({ ok: true, tookMs: Date.now() - startedAt, schedule });
   } catch (err) {
     return NextResponse.json(
