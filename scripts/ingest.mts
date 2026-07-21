@@ -121,14 +121,54 @@ export async function runMatchScheduleSync() {
     uniqueTeams.set(slugify(a.name), a);
     uniqueTeams.set(slugify(b.name), b);
   }
+  // A team's name/code/logo essentially never changes run to run, so writing
+  // all ~100 of them every single time (Turso write latency turned out to be
+  // the real cost here, not client-side concurrency — batching alone barely
+  // moved the needle) is almost entirely wasted work. Fetch what's already
+  // there and only actually write teams that are new or genuinely changed.
   const teamCache = new Map<string, Awaited<ReturnType<typeof upsertTeam>>>();
-  const TEAM_UPSERT_CONCURRENCY = 20;
   const teamEntries = [...uniqueTeams.entries()];
-  for (let i = 0; i < teamEntries.length; i += TEAM_UPSERT_CONCURRENCY) {
-    const batch = teamEntries.slice(i, i + TEAM_UPSERT_CONCURRENCY);
+  const existingTeams = await prisma.team.findMany({
+    where: { externalId: { in: teamEntries.map(([slug]) => slug) } },
+  });
+  const existingTeamBySlug = new Map(existingTeams.map((t) => [t.externalId, t]));
+
+  const teamsToUpsert: [string, { name: string; code: string; image: string }][] = [];
+  for (const [slug, t] of teamEntries) {
+    const existing = existingTeamBySlug.get(slug);
+    if (existing && existing.name === t.name && existing.code === t.code && existing.logoUrl === t.image) {
+      teamCache.set(slug, existing);
+    } else {
+      teamsToUpsert.push([slug, t]);
+    }
+  }
+
+  const TEAM_UPSERT_CONCURRENCY = 20;
+  for (let i = 0; i < teamsToUpsert.length; i += TEAM_UPSERT_CONCURRENCY) {
+    const batch = teamsToUpsert.slice(i, i + TEAM_UPSERT_CONCURRENCY);
     const rows = await Promise.all(batch.map(([, t]) => upsertTeam(t)));
     batch.forEach(([slug], idx) => teamCache.set(slug, rows[idx]));
   }
+
+  // Same idea as teams: most of the ~80 events in any given schedule window
+  // are matches that haven't changed since the last run a few minutes ago.
+  // Fetch what we already have and skip the write entirely when nothing
+  // about the match actually differs.
+  const matchExternalIds = events.filter((e) => e.type === "match" && e.match).map((e) => e.match!.id);
+  const existingMatches = await prisma.match.findMany({
+    where: { externalId: { in: matchExternalIds } },
+    select: {
+      externalId: true,
+      status: true,
+      scoreA: true,
+      scoreB: true,
+      winnerTeamId: true,
+      startTime: true,
+      tournamentId: true,
+      blockName: true,
+    },
+  });
+  const existingMatchByExternalId = new Map(existingMatches.map((m) => [m.externalId, m]));
 
   // The match upsert itself always targets a distinct row per event, so those
   // are safe to fire in bounded-concurrency batches too.
@@ -163,6 +203,21 @@ export async function runMatchScheduleSync() {
     const matchId = e.match.id;
     const strategyCount = e.match.strategy.count;
     const state = e.state;
+
+    const existing = existingMatchByExternalId.get(matchId);
+    const unchanged =
+      existing &&
+      existing.status === state &&
+      existing.scoreA === scoreA &&
+      existing.scoreB === scoreB &&
+      existing.winnerTeamId === winnerTeamId &&
+      existing.startTime.getTime() === startTime.getTime() &&
+      existing.tournamentId === tournamentId &&
+      existing.blockName === blockName;
+    if (unchanged) {
+      matchCount++;
+      continue;
+    }
 
     pending.push(
       prisma.match
