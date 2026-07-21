@@ -33,7 +33,7 @@ a {
 }
 
 .site-header .inner {
-  max-width: 960px;
+  max-width: 1480px;
   margin: 0 auto;
   padding: 14px 20px;
   display: flex;
@@ -46,6 +46,21 @@ a {
   font-size: 20px;
   letter-spacing: 0.5px;
   color: var(--accent);
+}
+
+.site-nav {
+  display: flex;
+  gap: 20px;
+}
+
+.site-nav a {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.site-nav a:hover {
+  color: var(--text);
 }
 
 .container {
@@ -62,12 +77,12 @@ a {
   margin: 28px 0 10px;
 }
 
-/* one match row */
-.match {
+/* ── VLR-style match list row: time | teams | status | stage+tournament ── */
+.match-list-row {
   display: grid;
-  grid-template-columns: 120px 1fr auto;
+  grid-template-columns: 56px 1fr 130px 200px;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
   padding: 12px 16px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -76,57 +91,117 @@ a {
   transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
 
-.match:hover {
+.match-list-row:hover {
   border-color: var(--accent);
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
 }
 
-/* completed matches: two per row */
-.results-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.results-grid .match {
-  margin-bottom: 0;
-}
-
-.match .meta {
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.match .league {
+.mlr-time {
+  font-size: 13px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
-.teams {
+.mlr-teams {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
 }
 
-.team-row {
+.mlr-team {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 15px;
+  font-size: 14px;
 }
 
-.team-row.winner {
+.mlr-team span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mlr-team.winner {
   font-weight: 700;
 }
 
-.team-row.loser {
+.mlr-team.loser {
   color: var(--muted);
+}
+
+.mlr-status {
+  display: flex;
+  justify-content: center;
+}
+
+.mlr-score {
+  font-weight: 700;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 5px;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.pill.live {
+  background: var(--live);
+}
+
+.pill.upcoming {
+  background: #2f9e52;
+}
+
+.mlr-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  text-align: right;
+  min-width: 0;
+}
+
+.mlr-meta-text {
+  min-width: 0;
+}
+
+.mlr-stage {
+  font-weight: 700;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mlr-tournament {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .team-logo {
   width: 20px;
   height: 20px;
   object-fit: contain;
+  /* Same issue as league logos: several team marks (e.g. G2) ship as white
+     artwork meant for a dark background and vanish on a light card. A
+     drop-shadow outline traces the logo's actual silhouette (unlike a plain
+     border/background, which just boxes the whole square) so it stays
+     legible without a chip cluttering every row. */
+  filter: drop-shadow(1px 0 0 #1c1e21) drop-shadow(-1px 0 0 #1c1e21) drop-shadow(0 1px 0 #1c1e21)
+    drop-shadow(0 -1px 0 #1c1e21);
 }
 
 .score {
@@ -149,11 +224,6 @@ a {
 .badge.live {
   background: rgba(28, 156, 75, 0.14);
   color: var(--live);
-}
-
-.badge.bo {
-  background: var(--surface-2);
-  color: var(--muted);
 }
 
 .empty {
@@ -189,11 +259,278 @@ a {
   font-variant-numeric: tabular-nums;
 }
 
+.big-score .score-win {
+  color: var(--live);
+}
+
+.big-score .score-lose {
+  color: var(--muted);
+}
+
 .match-sub {
   text-align: center;
   color: var(--muted);
   font-size: 13px;
   margin-bottom: 24px;
+}
+
+/* ── per-game stat tabs (All Matches / Match 1 / Match 2 / ...) ── */
+.match-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+}
+
+.match-tab {
+  appearance: none;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.match-tab:hover {
+  color: var(--text);
+}
+
+.match-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ── per-game summary: bans, objectives, gold (above the box scores) ── */
+.game-summary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 18px;
+  margin-bottom: 20px;
+}
+
+/* team names + that game's total kills, VLR-round-score style */
+.gkh {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  margin-bottom: 14px;
+}
+
+.gkh-team {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gkh-team.a {
+  text-align: right;
+}
+
+.gkh-team.b {
+  text-align: left;
+}
+
+.gkh-kills {
+  flex: 0 0 auto;
+  font-size: 24px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gkh-sep {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.summary-block {
+  margin-bottom: 16px;
+}
+
+.summary-block:last-child {
+  margin-bottom: 0;
+}
+
+.summary-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  margin: 0 0 8px;
+  text-align: center;
+}
+
+/* Team A's column flows toward the center divider, team B's flows away from
+   it — same "meeting in the middle" feel as the kills header above. */
+.summary-teams {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.summary-team-col.right {
+  text-align: right;
+}
+
+.summary-team-col.left {
+  text-align: left;
+}
+
+.summary-team-name {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.ban-icons {
+  display: flex;
+  gap: 5px;
+}
+
+.summary-team-col.right .ban-icons {
+  justify-content: flex-end;
+}
+
+.ban-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 5px;
+  object-fit: cover;
+  filter: grayscale(1);
+  opacity: 0.8;
+  border: 1px solid var(--accent);
+}
+
+.ban-icon-fallback {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.objective-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.summary-team-col.right .objective-tags {
+  justify-content: flex-end;
+}
+
+.obj-icon {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  display: block;
+}
+
+/* Dragon Soul: every dragon icon for a team that's secured a soul gets a
+   glowing ring in the soul's element color, set per-icon via --soul-color. */
+.obj-icon.soul-glow {
+  border-radius: 50%;
+  animation: soul-pulse 2s ease-in-out infinite;
+}
+
+@keyframes soul-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px var(--soul-color), 0 0 6px 2px var(--soul-color);
+  }
+  50% {
+    box-shadow: 0 0 0 2px var(--soul-color), 0 0 12px 4px var(--soul-color);
+  }
+}
+
+.obj-icon-fallback {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #888;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.obj-symbol-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.obj-count {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  background: #1c1e21;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: 3px;
+}
+
+.objective-none {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.gold-bar-wrap {
+  position: relative;
+  margin: 4px 0 26px;
+}
+
+.gold-bar-track {
+  display: flex;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.gold-bar-seg {
+  height: 100%;
+}
+
+/* fixed reference line at the true 50% mark, independent of the actual split */
+.gold-bar-midline {
+  position: absolute;
+  left: 50%;
+  top: -8px;
+  bottom: -8px;
+  border-left: 2px dashed rgba(0, 0, 0, 0.45);
+}
+
+/* sits right under wherever the blue/red segments actually meet */
+.gold-bar-diff {
+  position: absolute;
+  top: 100%;
+  transform: translateX(-50%);
+  margin-top: 5px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #d4a017;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.gold-coin-icon {
+  width: 11px;
+  height: 11px;
 }
 
 .back-link {
@@ -207,16 +544,13 @@ a {
   margin-bottom: 28px;
 }
 
-.game-block h3 {
-  font-size: 14px;
-  margin: 0 0 8px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-
 .boxscore {
   width: 100%;
+  /* Fixed layout + the <colgroup> in BoxScore.tsx are what keep both teams'
+     tables (each is its own <table>) lined up column-for-column — with the
+     default "auto" layout each table sizes independently off its own content
+     and the two teams' champion/item columns drift out of alignment. */
+  table-layout: fixed;
   border-collapse: collapse;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -257,4 +591,427 @@ a {
   color: var(--muted);
   font-size: 11px;
   text-transform: uppercase;
+}
+
+.side-tag {
+  margin-left: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.side-tag.blue {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+}
+
+.side-tag.red {
+  background: rgba(226, 55, 66, 0.14);
+  color: var(--accent);
+}
+
+/* Fixed row of slots: 7 wide for top/jungle/mid, 8 for bottom/support (their
+   extra bonus-item slot) — grid-auto-columns keeps every slot the same size
+   regardless of how many the current row actually has. */
+.item-slots {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 26px;
+  gap: 4px;
+}
+
+.item-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.item-icon.empty {
+  border: 1px dashed var(--border);
+  background: var(--surface-2);
+}
+
+.item-icon-wrap {
+  position: relative;
+  display: block;
+  width: 26px;
+  height: 26px;
+}
+
+/* Stacking consumables (Control Wards) collapse into one icon + a count
+   badge instead of eating a separate slot per copy. */
+.item-count {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  background: #1c1e21;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: 3px;
+}
+
+.champ-icons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
+}
+
+.champ-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.champ-fallback {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.loadout-icons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rune-icon-wrap {
+  position: relative;
+  display: inline-block;
+  width: 26px;
+  height: 26px;
+}
+
+.rune-icon {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+  border-radius: 50%;
+  background: var(--surface-2);
+  padding: 2px;
+}
+
+.rune-icon-secondary {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 15px;
+  height: 15px;
+  object-fit: contain;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--surface);
+  padding: 1px;
+}
+
+/* ── homepage: VLR-style 3-column layout ── */
+.home-layout {
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 24px 20px 64px;
+  display: grid;
+  grid-template-columns: 1fr 300px 300px;
+  gap: 24px;
+  align-items: start;
+}
+
+.matches-col,
+.events-col {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+@media (max-width: 1180px) {
+  .home-layout {
+    grid-template-columns: 1fr 300px;
+  }
+
+  .events-col {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 860px) {
+  .home-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .events-col {
+    grid-template-columns: 1fr;
+  }
+}
+
+.news-feed {
+  min-width: 0; /* let images/cards shrink instead of overflowing the grid track */
+}
+
+.view-all-link {
+  display: inline-block;
+  margin-top: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* ── news hero (top featured article) ── */
+.news-hero {
+  position: relative;
+  display: block;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  margin-bottom: 20px;
+}
+
+.news-hero-img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  display: block;
+}
+
+.news-hero-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 32px 18px 16px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.82), rgba(0, 0, 0, 0));
+}
+
+.news-hero-title {
+  color: #fff;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+/* ── news day groups + rows ── */
+.news-day-header {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  margin: 24px 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.today-tag {
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.news-row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 14px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+}
+
+.news-row:hover {
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+.news-thumb {
+  width: 110px;
+  height: 62px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.news-row-body {
+  min-width: 0;
+}
+
+.news-row-title {
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 1.3;
+  margin-bottom: 4px;
+}
+
+.news-row-excerpt {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.news-row-date {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* /news page: full grid of cards instead of a day-grouped feed */
+.news-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+}
+
+.news-grid .news-row {
+  grid-template-columns: 1fr;
+}
+
+.news-grid .news-thumb {
+  width: 100%;
+  height: 150px;
+}
+
+.sidebar-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.sidebar-panel .section-title {
+  margin: 0 0 10px;
+}
+
+.sidebar-match {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.sidebar-match:last-of-type {
+  border-bottom: none;
+}
+
+.sidebar-match-teams {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sidebar-match-team {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.sidebar-match-team img {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  filter: drop-shadow(1px 0 0 #1c1e21) drop-shadow(-1px 0 0 #1c1e21) drop-shadow(0 1px 0 #1c1e21)
+    drop-shadow(0 -1px 0 #1c1e21);
+}
+
+.sidebar-match-team.winner {
+  font-weight: 700;
+}
+
+.sidebar-match-team.loser {
+  color: var(--muted);
+}
+
+.sidebar-match-time {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sidebar-match-score {
+  font-weight: 700;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── homepage events (ongoing/upcoming) ── */
+.event-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.event-row:last-of-type {
+  border-bottom: none;
+}
+
+.event-badge {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.event-logo {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+  border-radius: 4px;
+  /* League logos are a mix of true brand colors (LEC ships teal, not white)
+     and near-white marks meant for a dark background — sampled pixels confirm
+     both exist, so we can't just invert everyone to black without wrecking
+     the colored ones. A muted slate chip (rather than near-black) keeps every
+     logo's real color intact while still giving white marks contrast, and
+     reads as an intentional accent rather than a harsh cutout on a light page. */
+  background: #3a3d45;
+  padding: 3px;
+}
+
+.event-info {
+  min-width: 0;
+}
+
+.event-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.event-range {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.event-league {
+  color: var(--text);
+  font-weight: 600;
 }

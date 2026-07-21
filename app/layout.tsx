@@ -31,6 +31,10 @@ export default function RootLayout({
             <a href="/" className="brand">
               Ward
             </a>
+            <nav className="site-nav">
+              <a href="/matches">Matches</a>
+              <a href="/news">News</a>
+            </nav>
           </div>
         </header>
         {children}

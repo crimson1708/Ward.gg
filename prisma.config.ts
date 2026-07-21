@@ -9,7 +9,8 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    // Falls back to a local sqlite file so no .env is required to get started.
-    url: process.env["DATABASE_URL"] ?? "file:./dev.db",
+    // Turso in production/when configured, otherwise a local sqlite file so
+    // no .env is required to get started with local dev.
+    url: process.env["TURSO_DATABASE_URL"] ?? process.env["DATABASE_URL"] ?? "file:./dev.db",
   },
 });
