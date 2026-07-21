@@ -11,6 +11,7 @@
 // such window — so for any old-enough not-yet-completed match, we ask it
 // directly whether the series is actually done.
 
+import { pathToFileURL } from "node:url";
 import { prisma } from "../lib/prisma.ts";
 import { getEventDetails } from "../lib/lolEsports.ts";
 
@@ -18,7 +19,7 @@ import { getEventDetails } from "../lib/lolEsports.ts";
 // bother double-checking it against getEventDetails.
 const STALE_AFTER_MS = 6 * 60 * 60 * 1000; // 6 hours
 
-async function main() {
+export async function runStaleReconciliation() {
   const cutoff = new Date(Date.now() - STALE_AFTER_MS);
   const candidates = await prisma.match.findMany({
     where: { status: { in: ["unstarted", "inProgress"] }, startTime: { lt: cutoff } },
@@ -49,10 +50,14 @@ async function main() {
   }
 
   console.log(`Reconciled ${fixed} match(es). (Their games/stats will be picked up by the next ingest:games run.)`);
-  await prisma.$disconnect();
+  return { checked: candidates.length, fixed };
 }
 
-main().catch((err) => {
-  console.error("Stale reconciliation failed:", err);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runStaleReconciliation()
+    .then(() => prisma.$disconnect())
+    .catch((err) => {
+      console.error("Stale reconciliation failed:", err);
+      process.exit(1);
+    });
+}

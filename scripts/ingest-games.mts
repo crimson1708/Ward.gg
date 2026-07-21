@@ -9,6 +9,7 @@
 //      per-game box score (GameStat).
 // Matches with no stats feed (many minor leagues) still get Game rows, just no stats.
 
+import { pathToFileURL } from "node:url";
 import { prisma } from "../lib/prisma.ts";
 import { getEventDetails, getGameWindow, getGameDetails } from "../lib/lolEsports.ts";
 
@@ -25,14 +26,10 @@ function playerKey(esportsPlayerId: string | undefined, summonerName: string): s
   return "sn:" + summonerName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }
 
-async function main() {
-  // Args: an optional numeric limit, and --force to reprocess matches that
-  // already have stats. Default is INCREMENTAL — we skip matches we've already
-  // done, which makes repeat runs nearly instant.
-  const args = process.argv.slice(2);
-  const force = args.includes("--force") || args.includes("-f");
-  const limitArg = args.find((a) => /^\d+$/.test(a));
-  const limit = limitArg ? Number(limitArg) : undefined;
+// Default is INCREMENTAL — we skip matches that already have stats, which
+// makes repeat runs nearly instant. Pass force:true to reprocess everything.
+export async function runGamesIngest(options: { limit?: number; force?: boolean } = {}) {
+  const { limit, force = false } = options;
 
   const matches = await prisma.match.findMany({
     where: { status: "completed" },
@@ -198,11 +195,24 @@ async function main() {
   console.log(`\nGames upserted: ${gamesUpserted}`);
   console.log(`Stat rows upserted: ${statsUpserted}`);
   console.log(`Matches with stats (this run): ${matchesWithStats}/${todo.length}`);
-  console.log(`Players in DB now: ${await prisma.player.count()}`);
-  await prisma.$disconnect();
+  const playerCount = await prisma.player.count();
+  console.log(`Players in DB now: ${playerCount}`);
+
+  return { gamesUpserted, statsUpserted, matchesWithStats, totalToProcess: todo.length, players: playerCount };
 }
 
-main().catch((err) => {
-  console.error("Games ingestion failed:", err);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  // Args: an optional numeric limit, and --force to reprocess matches that
+  // already have stats.
+  const args = process.argv.slice(2);
+  const force = args.includes("--force") || args.includes("-f");
+  const limitArg = args.find((a) => /^\d+$/.test(a));
+  const limit = limitArg ? Number(limitArg) : undefined;
+
+  runGamesIngest({ limit, force })
+    .then(() => prisma.$disconnect())
+    .catch((err) => {
+      console.error("Games ingestion failed:", err);
+      process.exit(1);
+    });
+}

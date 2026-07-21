@@ -5,6 +5,7 @@
 // already exists), keyed on the API's own id. Run it 100 times → no duplicates,
 // just fresh data. That's the whole trick to a re-runnable data pipeline.
 
+import { pathToFileURL } from "node:url";
 import { prisma } from "../lib/prisma.ts";
 import { getLeagues, getSchedule, getTournamentsForLeague } from "../lib/lolEsports.ts";
 
@@ -17,7 +18,7 @@ function slugify(text: string): string {
     .replace(/(^-|-$)/g, "");
 }
 
-async function main() {
+export async function runScheduleIngest() {
   // ── 1. LEAGUES ──────────────────────────────────────────────────────────
   const leagues = await getLeagues();
   for (const l of leagues) {
@@ -43,10 +44,18 @@ async function main() {
   // Also keep each league's tournament date ranges around in memory so the
   // match loop below can figure out which split/tournament a match belongs
   // to (the schedule feed gives no tournament id directly — just a league).
+  // The fetches themselves are the slow part (44+ sequential external calls
+  // added up to over a minute) — they're independent read-only requests, so
+  // fire them all concurrently. The upserts that follow stay sequential,
+  // since SQLite/libSQL serializes writes anyway and there's no benefit to
+  // parallelizing those.
+  const tournamentLists = await Promise.all(
+    leagueRows.map(async (l) => ({ league: l, tournaments: await getTournamentsForLeague(l.externalId) }))
+  );
+
   const tournamentsByLeague = new Map<number, { id: number; startDate: Date; endDate: Date }[]>();
   let tournamentCount = 0;
-  for (const l of leagueRows) {
-    const tournaments = await getTournamentsForLeague(l.externalId);
+  for (const { league: l, tournaments } of tournamentLists) {
     const list: { id: number; startDate: Date; endDate: Date }[] = [];
     for (const t of tournaments) {
       if (new Date(t.endDate).getTime() < TOURNAMENT_CUTOFF_MS) break;
@@ -81,6 +90,19 @@ async function main() {
   let matchCount = 0;
   let skipped = 0;
 
+  // The same team shows up across many events in one schedule window (a
+  // popular team might play several matches) — cache upserts per run so
+  // repeats reuse the row instead of hitting Turso again for identical data.
+  const teamCache = new Map<string, Awaited<ReturnType<typeof upsertTeam>>>();
+  async function upsertTeamCached(t: { name: string; code: string; image: string }) {
+    const slug = slugify(t.name);
+    const cached = teamCache.get(slug);
+    if (cached) return cached;
+    const row = await upsertTeam(t);
+    teamCache.set(slug, row);
+    return row;
+  }
+
   for (const e of events) {
     // Skip non-match rows (e.g. "show" segments) and unknown leagues.
     if (e.type !== "match" || !e.match) { skipped++; continue; }
@@ -92,8 +114,8 @@ async function main() {
     if (!a || !b || a.code === "TBD" || b.code === "TBD") { skipped++; continue; }
 
     // Upsert both teams, keyed by a slug we derive from their name.
-    const teamA = await upsertTeam(a);
-    const teamB = await upsertTeam(b);
+    const teamA = await upsertTeamCached(a);
+    const teamB = await upsertTeamCached(b);
 
     const scoreA = a.result?.gameWins ?? 0;
     const scoreB = b.result?.gameWins ?? 0;
@@ -130,9 +152,10 @@ async function main() {
   }
 
   console.log(`Matches upserted: ${matchCount}  (skipped ${skipped} non-match/placeholder rows)`);
-  console.log(`Teams in DB now: ${await prisma.team.count()}`);
+  const teamCount = await prisma.team.count();
+  console.log(`Teams in DB now: ${teamCount}`);
 
-  await prisma.$disconnect();
+  return { leagues: leagues.length, tournaments: tournamentCount, matches: matchCount, skipped, teams: teamCount };
 }
 
 async function upsertTeam(t: { name: string; code: string; image: string }) {
@@ -144,7 +167,14 @@ async function upsertTeam(t: { name: string; code: string; image: string }) {
   });
 }
 
-main().catch((err) => {
-  console.error("Ingestion failed:", err);
-  process.exit(1);
-});
+// Only run as a CLI entrypoint when invoked directly (`tsx scripts/ingest.mts`) —
+// not when imported by the API route, which calls runScheduleIngest() itself
+// and manages its own process lifecycle.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runScheduleIngest()
+    .then(() => prisma.$disconnect())
+    .catch((err) => {
+      console.error("Ingestion failed:", err);
+      process.exit(1);
+    });
+}
