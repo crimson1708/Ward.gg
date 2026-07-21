@@ -26,17 +26,20 @@ model League {
   name        String
   region      String
   slug        String       @unique // url-friendly, e.g. "lec" -> /leagues/lec
+  logoUrl     String?
   tournaments Tournament[]
   matches     Match[] // the schedule keys matches to a league directly
 }
 
 // A specific season/split of a league, e.g. "LEC Summer 2026".
 model Tournament {
-  id         Int      @id @default(autoincrement())
-  externalId String   @unique
+  id         Int       @id @default(autoincrement())
+  externalId String    @unique // the true unique key — Riot reuses slugs across leagues
   name       String
-  slug       String   @unique
-  league     League   @relation(fields: [leagueId], references: [id])
+  slug       String
+  startDate  DateTime?
+  endDate    DateTime?
+  league     League    @relation(fields: [leagueId], references: [id])
   leagueId   Int
   matches    Match[]
 }
@@ -88,6 +91,7 @@ model Match {
   startTime DateTime
   status    String // "unstarted" | "inProgress" | "completed"  (SQLite has no enum type)
   bestOf    Int // 1, 3, or 5
+  blockName String? // stage/round label from the schedule feed, e.g. "Week 1", "Semifinals"
 
   teamA   Team @relation("MatchTeamA", fields: [teamAId], references: [id])
   teamAId Int
@@ -116,6 +120,25 @@ model Game {
   durationSecs Int?
   winnerTeamId Int?
   stats        GameStat[]
+
+  // ── Team-level summary, keyed to Match.teamA/teamB (not blue/red — sides
+  //    swap between games, but "team A" doesn't). Dragons/barons/gold come
+  //    straight from Riot's own live-stats feed (same fetch as GameStat,
+  //    no extra cost). Bans/grubs aren't in that feed at all — those get
+  //    filled in later by a separate Leaguepedia-backed script, so they stay
+  //    null until (and unless) that game gets matched there.
+  teamADragons   String? // comma-separated dragon types in kill order, e.g. "cloud,chemtech,chemtech"
+  teamBDragons   String?
+  teamABarons    Int?
+  teamBBarons    Int?
+  teamAGold      Int?
+  teamBGold      Int?
+  teamABans      String? // comma-separated champion ids, from Leaguepedia
+  teamBBans      String?
+  teamAVoidGrubs Int?
+  teamBVoidGrubs Int?
+  teamARiftHeralds Int?
+  teamBRiftHeralds Int?
 }
 
 // One row PER PLAYER PER GAME — this is the detailed box score you pulled from
@@ -136,8 +159,25 @@ model GameStat {
   assists    Int
   creepScore Int
   totalGold  Int
+  items      String? // comma-separated item ids, final build order, from the /details feed
+  keystone     Int? // primary keystone perk id — perkMetadata.perks[0] from the /details feed
+  secondaryTree Int? // secondary rune tree id — perkMetadata.subStyleId from the /details feed
 
   // A player only appears once per game, so this pair is unique — again enables
   // safe upserts during ingestion.
   @@unique([gameId, playerId])
+}
+
+// A news headline scraped from lolesports.com's news index. We only ever store
+// enough to render a headline card (title, thumbnail, excerpt, date) — the
+// article itself stays on lolesports.com; sourceUrl just links out to it.
+model NewsArticle {
+  id          Int      @id @default(autoincrement())
+  externalId  String   @unique // the CMS's own article id, from the scraped page
+  slug        String   @unique // e.g. "2026-lcs-summer-primer" -> our own key + URL suffix
+  title       String
+  excerpt     String?
+  imageUrl    String
+  sourceUrl   String // full https://lolesports.com/... link to the real article
+  publishedAt DateTime
 }

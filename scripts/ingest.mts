@@ -6,7 +6,7 @@
 // just fresh data. That's the whole trick to a re-runnable data pipeline.
 
 import { prisma } from "../lib/prisma.ts";
-import { getLeagues, getSchedule } from "../lib/lolEsports.ts";
+import { getLeagues, getSchedule, getTournamentsForLeague } from "../lib/lolEsports.ts";
 
 // Turn "Unicorns of Love Sexy Edition" -> "unicorns-of-love-sexy-edition".
 // We need our own stable key for teams because the schedule gives them no id.
@@ -23,8 +23,8 @@ async function main() {
   for (const l of leagues) {
     await prisma.league.upsert({
       where: { externalId: l.id },
-      update: { name: l.name, region: l.region, slug: l.slug },
-      create: { externalId: l.id, name: l.name, region: l.region, slug: l.slug },
+      update: { name: l.name, region: l.region, slug: l.slug, logoUrl: l.image },
+      create: { externalId: l.id, name: l.name, region: l.region, slug: l.slug, logoUrl: l.image },
     });
   }
   console.log(`Leagues upserted: ${leagues.length}`);
@@ -33,7 +33,50 @@ async function main() {
   const leagueRows = await prisma.league.findMany();
   const leagueIdBySlug = new Map(leagueRows.map((l) => [l.slug, l.id]));
 
-  // ── 2. MATCHES (and the teams inside them) ────────────────────────────────
+  // ── 2. TOURNAMENTS (splits/stages, with their date ranges) ────────────────
+  // Only their date range matters to us right now — it's what lets the
+  // homepage show "ongoing events" the way VLR does. The API returns a
+  // league's ENTIRE tournament history (some go back to 2013), newest first,
+  // so we stop as soon as we reach ones that ended a while ago rather than
+  // re-upserting a decade of irrelevant splits on every run.
+  const TOURNAMENT_CUTOFF_MS = Date.now() - 60 * 24 * 60 * 60 * 1000; // 60 days ago
+  // Also keep each league's tournament date ranges around in memory so the
+  // match loop below can figure out which split/tournament a match belongs
+  // to (the schedule feed gives no tournament id directly — just a league).
+  const tournamentsByLeague = new Map<number, { id: number; startDate: Date; endDate: Date }[]>();
+  let tournamentCount = 0;
+  for (const l of leagueRows) {
+    const tournaments = await getTournamentsForLeague(l.externalId);
+    const list: { id: number; startDate: Date; endDate: Date }[] = [];
+    for (const t of tournaments) {
+      if (new Date(t.endDate).getTime() < TOURNAMENT_CUTOFF_MS) break;
+      const startDate = new Date(t.startDate);
+      const endDate = new Date(t.endDate);
+      const row = await prisma.tournament.upsert({
+        where: { externalId: t.id },
+        update: { name: t.slug, startDate, endDate },
+        create: { externalId: t.id, name: t.slug, slug: t.slug, leagueId: l.id, startDate, endDate },
+      });
+      list.push({ id: row.id, startDate, endDate });
+      tournamentCount++;
+    }
+    tournamentsByLeague.set(l.id, list);
+  }
+  console.log(`Tournaments upserted: ${tournamentCount}`);
+
+  // Tournament dates are day-only, so give the end date a day of slack —
+  // otherwise a match played late on the split's last calendar day could
+  // fall just outside the range.
+  function findTournamentId(leagueId: number, matchStart: Date): number | null {
+    const list = tournamentsByLeague.get(leagueId);
+    if (!list) return null;
+    const hit = list.find(
+      (t) => matchStart >= t.startDate && matchStart.getTime() <= t.endDate.getTime() + 24 * 60 * 60 * 1000
+    );
+    return hit ? hit.id : null;
+  }
+
+  // ── 3. MATCHES (and the teams inside them) ────────────────────────────────
   const events = await getSchedule();
   let matchCount = 0;
   let skipped = 0;
@@ -60,16 +103,22 @@ async function main() {
       else if (b.result?.outcome === "win") winnerTeamId = teamB.id;
     }
 
+    const startTime = new Date(e.startTime);
+    const tournamentId = findTournamentId(leagueId, startTime);
+    const blockName = e.blockName ?? null;
+
     await prisma.match.upsert({
       where: { externalId: e.match.id },
       // On update we refresh only the things that change over a match's life.
-      update: { status: e.state, scoreA, scoreB, winnerTeamId, startTime: new Date(e.startTime) },
+      update: { status: e.state, scoreA, scoreB, winnerTeamId, startTime, tournamentId, blockName },
       create: {
         externalId: e.match.id,
         leagueId,
-        startTime: new Date(e.startTime),
+        tournamentId,
+        startTime,
         status: e.state,
         bestOf: e.match.strategy.count,
+        blockName,
         teamAId: teamA.id,
         teamBId: teamB.id,
         scoreA,
