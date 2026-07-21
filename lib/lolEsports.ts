@@ -63,6 +63,7 @@ export interface ApiEventTeam {
   name: string;
   code: string;
   image: string;
+  result?: { gameWins: number } | null;
 }
 
 export interface ApiGame {

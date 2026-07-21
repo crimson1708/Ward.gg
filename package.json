@@ -14,7 +14,8 @@
     "ingest:items": "tsx scripts/ingest-items.mts",
     "ingest:runes": "tsx scripts/ingest-runes.mts",
     "ingest:draft": "tsx scripts/ingest-draft.mts",
-    "refresh": "tsx scripts/ingest.mts && tsx scripts/ingest-games.mts && tsx scripts/ingest-news.mts",
+    "ingest:stale": "tsx scripts/ingest-stale.mts",
+    "refresh": "tsx scripts/ingest.mts && tsx scripts/ingest-stale.mts && tsx scripts/ingest-games.mts && tsx scripts/ingest-news.mts",
     "watch": "tsx scripts/watch.mts",
     "postinstall": "prisma generate",
     "setup:db": "prisma migrate deploy"
