@@ -26,31 +26,28 @@ function playerKey(esportsPlayerId: string | undefined, summonerName: string): s
   return "sn:" + summonerName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }
 
-// Default is INCREMENTAL — we skip matches that already have stats, which
-// makes repeat runs nearly instant. Pass force:true to reprocess everything.
+// Default is INCREMENTAL — we skip matches whose games have all already been
+// CHECKED (statsChecked, set regardless of whether a feed was actually found —
+// see the Game model comment), which makes repeat runs nearly instant. Pass
+// force:true to reprocess everything, including known-no-feed games.
 export async function runGamesIngest(options: { limit?: number; force?: boolean } = {}) {
   const { limit, force = false } = options;
 
   const matches = await prisma.match.findMany({
     where: { status: "completed" },
-    include: { teamA: true, teamB: true },
+    include: { teamA: true, teamB: true, games: { select: { state: true, statsChecked: true } } },
     orderBy: { startTime: "desc" },
     take: limit,
   });
 
-  // A finished match's stats never change. So unless --force is passed, figure
-  // out which matches already have stats (one query) and skip them entirely —
-  // no network calls, no DB writes for those.
-  const matchIdsWithStats = new Set<number>();
-  if (!force) {
-    const gamesWithStats = await prisma.game.findMany({
-      where: { stats: { some: {} } },
-      select: { matchId: true },
-    });
-    for (const g of gamesWithStats) matchIdsWithStats.add(g.matchId);
-  }
-
-  const todo = matches.filter((m) => force || !matchIdsWithStats.has(m.id));
+  // Needs work if we've never seen this match's games at all, or if any of
+  // its completed games hasn't been checked yet (found stats or confirmed
+  // no feed exists — either way, statsChecked is set so we don't redo it).
+  const todo = matches.filter((m) => {
+    if (force) return true;
+    if (m.games.length === 0) return true;
+    return m.games.some((g) => g.state === "completed" && !g.statsChecked);
+  });
   console.log(
     `${matches.length} completed matches — ${matches.length - todo.length} already have stats (skipped), ${todo.length} to process.\n`
   );
@@ -90,13 +87,20 @@ export async function runGamesIngest(options: { limit?: number; force?: boolean 
       gamesUpserted++;
 
       if (g.state !== "completed") continue;
+      if (!force && gameRow.statsChecked) continue; // already checked (found or confirmed no feed)
 
       // side ("blue"/"red") -> our team id, from this game's team/side mapping.
       const ourTeamIdBySide: Record<string, number | undefined> = {};
       for (const gt of g.teams) ourTeamIdBySide[gt.side] = ourTeamIdByApiId[gt.id];
 
       const winResult = await getGameWindow(g.id, match.startTime.getTime());
-      if (!winResult) continue; // no stats feed for this game
+      if (!winResult) {
+        // No live-stats feed exists for this game (common for minor leagues) —
+        // mark it checked so we don't burn the full offset-ladder probe again
+        // on every future run trying to find something that isn't there.
+        await prisma.game.update({ where: { id: gameRow.id }, data: { statsChecked: true } });
+        continue;
+      }
       const { data: win, startingTime } = winResult;
       matchHadStats = true;
 
@@ -125,6 +129,7 @@ export async function runGamesIngest(options: { limit?: number; force?: boolean 
           teamBBarons: teamBObjectives.barons,
           teamAGold: teamAObjectives.totalGold,
           teamBGold: teamBObjectives.totalGold,
+          statsChecked: true,
         },
       });
 

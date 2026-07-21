@@ -120,6 +120,12 @@ model Game {
   durationSecs Int?
   winnerTeamId Int?
   stats        GameStat[]
+  // Set once we've attempted to pull box-score stats for this game, win or
+  // lose — some completed games (mostly minor leagues) simply have no
+  // live-stats feed on Riot's side at all, and without this flag ingestion
+  // would re-probe them (an 11-request offset ladder each) on every single
+  // run forever, since "no stats found" looks identical to "never tried".
+  statsChecked Boolean    @default(false)
 
   // ── Team-level summary, keyed to Match.teamA/teamB (not blue/red — sides
   //    swap between games, but "team A" doesn't). Dragons/barons/gold come

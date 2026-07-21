@@ -109,23 +109,30 @@ export async function runMatchScheduleSync() {
   let skipped = 0;
 
   // The same team shows up across many events in one schedule window (a
-  // popular team might play several matches) — cache upserts per run so
-  // repeats reuse the row instead of hitting Turso again for identical data.
+  // popular team might play several matches) — resolve every DISTINCT team
+  // up front, in bounded-concurrency batches, so the match loop below never
+  // has to await a team upsert at all (it was ~60-70 sequential round trips
+  // otherwise, the single biggest cost in this sync).
+  const uniqueTeams = new Map<string, { name: string; code: string; image: string }>();
+  for (const e of events) {
+    if (e.type !== "match" || !e.match) continue;
+    const [a, b] = e.match.teams;
+    if (!a || !b || a.code === "TBD" || b.code === "TBD") continue;
+    uniqueTeams.set(slugify(a.name), a);
+    uniqueTeams.set(slugify(b.name), b);
+  }
   const teamCache = new Map<string, Awaited<ReturnType<typeof upsertTeam>>>();
-  async function upsertTeamCached(t: { name: string; code: string; image: string }) {
-    const slug = slugify(t.name);
-    const cached = teamCache.get(slug);
-    if (cached) return cached;
-    const row = await upsertTeam(t);
-    teamCache.set(slug, row);
-    return row;
+  const TEAM_UPSERT_CONCURRENCY = 20;
+  const teamEntries = [...uniqueTeams.entries()];
+  for (let i = 0; i < teamEntries.length; i += TEAM_UPSERT_CONCURRENCY) {
+    const batch = teamEntries.slice(i, i + TEAM_UPSERT_CONCURRENCY);
+    const rows = await Promise.all(batch.map(([, t]) => upsertTeam(t)));
+    batch.forEach(([slug], idx) => teamCache.set(slug, rows[idx]));
   }
 
-  // Team resolution stays sequential (cheap thanks to the cache above, and it
-  // has to be — concurrent upserts of the same not-yet-cached team would
-  // race). The match upsert itself always targets a distinct row per event,
-  // though, so those are safe to fire in bounded-concurrency batches.
-  const MATCH_UPSERT_CONCURRENCY = 10;
+  // The match upsert itself always targets a distinct row per event, so those
+  // are safe to fire in bounded-concurrency batches too.
+  const MATCH_UPSERT_CONCURRENCY = 20;
   let pending: Promise<void>[] = [];
 
   for (const e of events) {
@@ -138,9 +145,9 @@ export async function runMatchScheduleSync() {
     // Skip placeholder matchups (e.g. "TBD vs TBD" for future bracket slots).
     if (!a || !b || a.code === "TBD" || b.code === "TBD") { skipped++; continue; }
 
-    // Upsert both teams, keyed by a slug we derive from their name.
-    const teamA = await upsertTeamCached(a);
-    const teamB = await upsertTeamCached(b);
+    // Both teams were already resolved in the prefetch pass above.
+    const teamA = teamCache.get(slugify(a.name))!;
+    const teamB = teamCache.get(slugify(b.name))!;
 
     const scoreA = a.result?.gameWins ?? 0;
     const scoreB = b.result?.gameWins ?? 0;
