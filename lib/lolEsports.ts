@@ -211,9 +211,22 @@ export async function getGameWindow(gameId: string, seriesStartMs: number): Prom
   let lastGood: GameWindowResult | null = null;
   for (const hours of OFFSET_HOURS_LADDER) {
     const startingTime = roundTo10s(seriesStartMs + hours * 3_600_000);
-    const res = await fetch(`${FEED}/window/${gameId}?startingTime=${startingTime}`);
+    // A non-ok/malformed response at ONE offset used to abort the whole
+    // ladder (`break`) — but that's indistinguishable from a transient
+    // hiccup on the feed host, and gave up before ever trying later offsets
+    // that might have reached the game's actual "finished" frame. Two real
+    // games ended up with a mid-game (even opening-seconds) snapshot stored
+    // as their final stats this way. Keep probing instead; only exhausting
+    // the whole ladder without ever seeing "finished" falls back to
+    // best-effort (below).
+    let res: Response;
+    try {
+      res = await fetch(`${FEED}/window/${gameId}?startingTime=${startingTime}`);
+    } catch {
+      continue;
+    }
     if (res.status === 204) continue; // time was before this game started — try later
-    if (!res.ok) break; // no feed for this game
+    if (!res.ok) continue;
     const text = await res.text();
     try {
       const json = JSON.parse(text) as GameWindow;
@@ -221,7 +234,7 @@ export async function getGameWindow(gameId: string, seriesStartMs: number): Prom
       lastGood = { data: json, startingTime };
       if (json.frames.some((f) => f.gameState === "finished")) return lastGood;
     } catch {
-      break;
+      continue;
     }
   }
   return lastGood; // best-effort: never saw "finished", but return whatever we've got
