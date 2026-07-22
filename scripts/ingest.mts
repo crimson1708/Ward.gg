@@ -45,22 +45,35 @@ export async function runLeagueSync() {
   // while ago rather than re-upserting a decade of irrelevant splits.
   const TOURNAMENT_CUTOFF_MS = Date.now() - 60 * 24 * 60 * 60 * 1000; // 60 days ago
 
-  // The fetches themselves are read-only and independent, so fire them all
-  // concurrently — sequential was 44+ round trips adding up to over a minute.
-  // Each one now has its own timeout (see lib/lolEsports.ts), but a rejection
-  // from even one league would otherwise fail the entire Promise.all — catch
-  // per-league so one flaky/slow league just contributes nothing this run
-  // instead of taking every other league's data down with it.
-  const tournamentLists = await Promise.all(
-    leagueRows.map(async (l) => {
-      try {
-        return { league: l, tournaments: await getTournamentsForLeague(l.externalId) };
-      } catch (err) {
-        console.warn(`Skipping tournaments for league ${l.slug}: ${err}`);
-        return { league: l, tournaments: [] };
-      }
-    })
-  );
+  // The fetches themselves are read-only and independent, so fire them
+  // concurrently — sequential was 44+ round trips adding up to over a
+  // minute. Explicit bounded concurrency rather than a single unbounded
+  // Promise.all(44 leagues): the runtime's own outbound-connection cap
+  // (undocumented, and apparently lower than 44 on Vercel) was silently
+  // serializing requests into waves anyway — when multiple waves each had a
+  // straggler hit the per-request timeout, those waits stacked instead of
+  // overlapping, occasionally blowing well past what one timeout should
+  // allow. Batching ourselves gives a provable worst case instead:
+  // ceil(leagues / concurrency) waves, each bounded by REQUEST_TIMEOUT_MS.
+  const LEAGUE_FETCH_CONCURRENCY = 15;
+  const tournamentLists: { league: (typeof leagueRows)[number]; tournaments: Awaited<ReturnType<typeof getTournamentsForLeague>> }[] = [];
+  for (let i = 0; i < leagueRows.length; i += LEAGUE_FETCH_CONCURRENCY) {
+    const batch = leagueRows.slice(i, i + LEAGUE_FETCH_CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async (l) => {
+        try {
+          return { league: l, tournaments: await getTournamentsForLeague(l.externalId) };
+        } catch (err) {
+          // A rejection here would otherwise fail the entire batch — catch
+          // per-league so one flaky/slow league just contributes nothing
+          // this run instead of taking every other league down with it.
+          console.warn(`Skipping tournaments for league ${l.slug}: ${err}`);
+          return { league: l, tournaments: [] };
+        }
+      })
+    );
+    tournamentLists.push(...results);
+  }
 
   let tournamentCount = 0;
   for (const { league: l, tournaments } of tournamentLists) {
