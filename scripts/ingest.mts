@@ -215,10 +215,15 @@ export async function runMatchScheduleSync() {
 
     const scoreA = a.result?.gameWins ?? 0;
     const scoreB = b.result?.gameWins ?? 0;
+    // Derive the winner from the game-win counts rather than trusting the
+    // API's separate `outcome` field — the two can disagree (seen live: a
+    // match recorded scoreA=1/scoreB=3 but outcome flagged team A as the
+    // winner), and once written to a "completed" match nothing downstream
+    // ever re-examines it. gameWins is the authoritative count either way.
     let winnerTeamId: number | null = null;
     if (e.state === "completed") {
-      if (a.result?.outcome === "win") winnerTeamId = teamA.id;
-      else if (b.result?.outcome === "win") winnerTeamId = teamB.id;
+      if (scoreA > scoreB) winnerTeamId = teamA.id;
+      else if (scoreB > scoreA) winnerTeamId = teamB.id;
     }
 
     const startTime = new Date(e.startTime);
