@@ -47,8 +47,19 @@ export async function runLeagueSync() {
 
   // The fetches themselves are read-only and independent, so fire them all
   // concurrently — sequential was 44+ round trips adding up to over a minute.
+  // Each one now has its own timeout (see lib/lolEsports.ts), but a rejection
+  // from even one league would otherwise fail the entire Promise.all — catch
+  // per-league so one flaky/slow league just contributes nothing this run
+  // instead of taking every other league's data down with it.
   const tournamentLists = await Promise.all(
-    leagueRows.map(async (l) => ({ league: l, tournaments: await getTournamentsForLeague(l.externalId) }))
+    leagueRows.map(async (l) => {
+      try {
+        return { league: l, tournaments: await getTournamentsForLeague(l.externalId) };
+      } catch (err) {
+        console.warn(`Skipping tournaments for league ${l.slug}: ${err}`);
+        return { league: l, tournaments: [] };
+      }
+    })
   );
 
   let tournamentCount = 0;

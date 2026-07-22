@@ -5,14 +5,27 @@
 const API_KEY = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z"; // public shared key
 const ESPORTS = "https://esports-api.lolesports.com/persisted/gw";
 
+// Without a timeout, a single hung request stalls anything awaiting it
+// indefinitely — fatal for callers like runLeagueSync that fire dozens of
+// these concurrently via Promise.all: one unresponsive league would hold the
+// whole batch (and its caller's request timeout) hostage.
+const REQUEST_TIMEOUT_MS = 8000;
+
 async function get(path: string) {
-  const res = await fetch(`${ESPORTS}/${path}`, {
-    headers: { "x-api-key": API_KEY },
-  });
-  if (!res.ok) {
-    throw new Error(`LoL Esports API ${path} failed: ${res.status} ${res.statusText}`);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${ESPORTS}/${path}`, {
+      headers: { "x-api-key": API_KEY },
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      throw new Error(`LoL Esports API ${path} failed: ${res.status} ${res.statusText}`);
+    }
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
   }
-  return res.json();
 }
 
 // ── Types describing ONLY the fields we actually use (from the raw JSON we
