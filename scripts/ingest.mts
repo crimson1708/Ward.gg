@@ -190,6 +190,8 @@ export async function runMatchScheduleSync() {
       startTime: true,
       tournamentId: true,
       blockName: true,
+      teamAId: true,
+      teamBId: true,
     },
   });
   const existingMatchByExternalId = new Map(existingMatches.map((m) => [m.externalId, m]));
@@ -209,12 +211,30 @@ export async function runMatchScheduleSync() {
     // Skip placeholder matchups (e.g. "TBD vs TBD" for future bracket slots).
     if (!a || !b || a.code === "TBD" || b.code === "TBD") { skipped++; continue; }
 
-    // Both teams were already resolved in the prefetch pass above.
-    const teamA = teamCache.get(slugify(a.name))!;
-    const teamB = teamCache.get(slugify(b.name))!;
+    // Both teams were already resolved in the prefetch pass above. These are
+    // identified by THIS run's array position, which is not necessarily our
+    // permanent "team A"/"team B" for this match (see below).
+    const posA = teamCache.get(slugify(a.name))!;
+    const posB = teamCache.get(slugify(b.name))!;
 
-    const scoreA = a.result?.gameWins ?? 0;
-    const scoreB = b.result?.gameWins ?? 0;
+    const matchId = e.match.id;
+    const existing = existingMatchByExternalId.get(matchId);
+
+    // Riot's team array order for a given match isn't guaranteed stable
+    // across separate API calls — seen live: a match created with team A =
+    // Ole Miss got a later update where the API returned Contingent first
+    // instead, and blindly trusting array position wrote Contingent's score
+    // into the "team A" column. teamAId/teamBId are fixed permanently at
+    // creation, so on an update, resolve OUR team A/B by matching identity
+    // against that fixed mapping instead of trusting position — everything
+    // below (scores, winner) is then computed from these, never from
+    // position, so the whole record stays internally consistent.
+    const posAIsOurTeamA = !existing || posA.id === existing.teamAId;
+    const teamA = posAIsOurTeamA ? posA : posB;
+    const teamB = posAIsOurTeamA ? posB : posA;
+    const scoreA = (posAIsOurTeamA ? a : b).result?.gameWins ?? 0;
+    const scoreB = (posAIsOurTeamA ? b : a).result?.gameWins ?? 0;
+
     // Derive the winner from the game-win counts rather than trusting the
     // API's separate `outcome` field — the two can disagree (seen live: a
     // match recorded scoreA=1/scoreB=3 but outcome flagged team A as the
@@ -229,11 +249,8 @@ export async function runMatchScheduleSync() {
     const startTime = new Date(e.startTime);
     const tournamentId = findTournamentId(leagueId, startTime);
     const blockName = e.blockName ?? null;
-    const matchId = e.match.id;
     const strategyCount = e.match.strategy.count;
     const state = e.state;
-
-    const existing = existingMatchByExternalId.get(matchId);
     const unchanged =
       existing &&
       existing.status === state &&
