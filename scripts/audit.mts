@@ -89,3 +89,36 @@ export async function runDeepAudit() {
   }
   return { checked, fixed };
 }
+
+// statsChecked=true with zero GameStat rows is meant to mean "confirmed no
+// live-stats feed exists for this game" — but that's not always permanent:
+// seen live, a game's feed simply wasn't populated on Riot's side yet at the
+// moment we first checked, and showed up hours later. Rather than probing
+// forever (expensive — an 11-request offset ladder per game) or giving up
+// forever (wrong, as above), periodically un-mark recent candidates so
+// runGamesIngest's normal incremental pass gives them one more real attempt.
+// Scoped to the same recent window as the deep score audit: an old game
+// that's been checked and found empty for months is genuinely gone, not
+// delayed — retrying those forever would just waste time for no benefit.
+const STATS_RECHECK_WINDOW_DAYS = 7;
+
+export async function runStatsRecheckAudit() {
+  const cutoff = new Date(Date.now() - STATS_RECHECK_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const candidates = await prisma.game.findMany({
+    where: {
+      state: "completed",
+      statsChecked: true,
+      stats: { none: {} },
+      match: { startTime: { gte: cutoff } },
+    },
+    select: { id: true },
+  });
+  if (candidates.length === 0) return { requeued: 0 };
+
+  await prisma.game.updateMany({
+    where: { id: { in: candidates.map((g) => g.id) } },
+    data: { statsChecked: false },
+  });
+  console.log(`[audit] requeued ${candidates.length} recent no-feed game(s) for one more stats attempt.`);
+  return { requeued: candidates.length };
+}
