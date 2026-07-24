@@ -19,6 +19,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { runStaleReconciliation } from "@/scripts/ingest-stale.mts";
 import { runGamesIngest } from "@/scripts/ingest-games.mts";
 import { runNewsIngest } from "@/scripts/ingest-news.mts";
+import { runCheapAudit } from "@/scripts/audit.mts";
 import { checkRefreshSecret } from "@/lib/refreshAuth.ts";
 
 export const runtime = "nodejs";
@@ -34,8 +35,9 @@ export async function GET(req: NextRequest) {
     const stale = await runStaleReconciliation();
     const games = await runGamesIngest();
     const news = await runNewsIngest();
+    const audit = await runCheapAudit();
 
-    return NextResponse.json({ ok: true, tookMs: Date.now() - startedAt, stale, games, news });
+    return NextResponse.json({ ok: true, tookMs: Date.now() - startedAt, stale, games, news, audit });
   } catch (err) {
     return NextResponse.json(
       { ok: false, tookMs: Date.now() - startedAt, error: String(err) },

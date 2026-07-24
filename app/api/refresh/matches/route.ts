@@ -11,6 +11,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { runMatchScheduleSync } from "@/scripts/ingest.mts";
+import { runDeepAudit } from "@/scripts/audit.mts";
 import { checkRefreshSecret } from "@/lib/refreshAuth.ts";
 
 export const runtime = "nodejs";
@@ -24,7 +25,8 @@ export async function GET(req: NextRequest) {
   const startedAt = Date.now();
   try {
     const schedule = await runMatchScheduleSync();
-    return NextResponse.json({ ok: true, tookMs: Date.now() - startedAt, schedule });
+    const audit = await runDeepAudit();
+    return NextResponse.json({ ok: true, tookMs: Date.now() - startedAt, schedule, audit });
   } catch (err) {
     return NextResponse.json(
       { ok: false, tookMs: Date.now() - startedAt, error: String(err) },
