@@ -207,6 +207,12 @@ export interface GameWindowResult {
   startingTime: string;
 }
 
+// Total gold is our proxy for "how far into the game this snapshot reached" —
+// used below to pick the best fallback when no offset ever finds "finished".
+function totalGold(frame: GameWindow["frames"][number]): number {
+  return frame.blueTeam.totalGold + frame.redTeam.totalGold;
+}
+
 export async function getGameWindow(gameId: string, seriesStartMs: number): Promise<GameWindowResult | null> {
   let lastGood: GameWindowResult | null = null;
   for (const hours of OFFSET_HOURS_LADDER) {
@@ -231,8 +237,19 @@ export async function getGameWindow(gameId: string, seriesStartMs: number): Prom
     try {
       const json = JSON.parse(text) as GameWindow;
       if (!json.frames?.length) continue;
-      lastGood = { data: json, startingTime };
-      if (json.frames.some((f) => f.gameState === "finished")) return lastGood;
+      if (json.frames.some((f) => f.gameState === "finished")) return { data: json, startingTime };
+      // Not finished — larger offsets aren't guaranteed to be further into
+      // the game than smaller ones. Seen live: a game's window buffer reset
+      // to a near-empty snapshot for every offset past the first, so always
+      // keeping "whichever response we tried most recently" (the ladder's
+      // original behavior) meant a real, substantial mid-game snapshot got
+      // silently replaced by a worse one. Keep whichever candidate is
+      // furthest into the game instead, regardless of iteration order.
+      const candidate = json.frames[json.frames.length - 1];
+      const currentBest = lastGood?.data.frames[lastGood.data.frames.length - 1];
+      if (!currentBest || totalGold(candidate) > totalGold(currentBest)) {
+        lastGood = { data: json, startingTime };
+      }
     } catch {
       continue;
     }
