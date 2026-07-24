@@ -40,13 +40,23 @@ export async function runGamesIngest(options: { limit?: number; force?: boolean 
     take: limit,
   });
 
-  // Needs work if we've never seen this match's games at all, or if any of
-  // its completed games hasn't been checked yet (found stats or confirmed
-  // no feed exists — either way, statsChecked is set so we don't redo it).
+  // Needs work if: we've never seen this match's games at all; any of its
+  // completed games hasn't been checked yet (found stats or confirmed no
+  // feed exists — either way, statsChecked is set so we don't redo it); or
+  // any game is still sitting in a non-terminal state (unstarted/inProgress)
+  // despite the MATCH itself being marked completed. That last case is real
+  // and not just theoretical — seen live: a match got marked completed by
+  // the schedule sync while getEventDetails' own per-game states hadn't
+  // caught up yet, so the initial fetch stored "unstarted" for every game.
+  // Without this check that staleness is permanent: a completed match's
+  // games never showing "completed" here means it can never re-qualify for
+  // a re-check on its own.
   const todo = matches.filter((m) => {
     if (force) return true;
     if (m.games.length === 0) return true;
-    return m.games.some((g) => g.state === "completed" && !g.statsChecked);
+    const hasStaleGameState = m.games.some((g) => g.state !== "completed" && g.state !== "unneeded");
+    const hasUncheckedCompletedGame = m.games.some((g) => g.state === "completed" && !g.statsChecked);
+    return hasStaleGameState || hasUncheckedCompletedGame;
   });
   console.log(
     `${matches.length} completed matches — ${matches.length - todo.length} already have stats (skipped), ${todo.length} to process.\n`
