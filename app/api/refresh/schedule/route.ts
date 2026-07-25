@@ -10,7 +10,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { runLeagueSync } from "@/scripts/ingest.mts";
-import { runStatsRecheckAudit } from "@/scripts/audit.mts";
+import { runStatsRecheckAudit, runRosterSwapAudit } from "@/scripts/audit.mts";
 import { checkRefreshSecret } from "@/lib/refreshAuth.ts";
 
 export const runtime = "nodejs";
@@ -24,15 +24,15 @@ export async function GET(req: NextRequest) {
   const startedAt = Date.now();
   try {
     const schedule = await runLeagueSync();
-    // Lives here rather than the fast tier deliberately: this just flips
-    // statsChecked back to false for candidates, and the fast tier's own
-    // runGamesIngest (running every couple minutes anyway) does the actual
-    // re-probe. Resetting on the fast tier's own cadence would mean
-    // genuinely-empty games get their full offset-ladder re-probed every
-    // couple minutes for a week straight — this tier's much slower cadence
-    // keeps that cost bounded while still catching delayed feeds same-day.
+    // Both audits below just flip statsChecked back to false for candidates
+    // — the fast tier's own runGamesIngest (running every couple minutes
+    // anyway) does the actual re-probe. Resetting on the fast tier's own
+    // cadence would mean these candidates get re-probed every couple
+    // minutes for a week straight; this tier's slower cadence keeps that
+    // cost bounded while still catching problems same-day.
     const recheck = await runStatsRecheckAudit();
-    return NextResponse.json({ ok: true, tookMs: Date.now() - startedAt, schedule, recheck });
+    const rosterSwaps = await runRosterSwapAudit();
+    return NextResponse.json({ ok: true, tookMs: Date.now() - startedAt, schedule, recheck, rosterSwaps });
   } catch (err) {
     return NextResponse.json(
       { ok: false, tookMs: Date.now() - startedAt, error: String(err) },

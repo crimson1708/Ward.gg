@@ -122,3 +122,59 @@ export async function runStatsRecheckAudit() {
   console.log(`[audit] requeued ${candidates.length} recent no-feed game(s) for one more stats attempt.`);
   return { requeued: candidates.length };
 }
+
+// Roster assignment (ingest-games.mts) resolves which physical team is
+// "blue" for a game by majority-voting player names against each team's
+// code — a fix for two independent Riot endpoints (getEventDetails' side
+// labels and the live-stats feed's own blue/red rosters) disagreeing about
+// which side is which. Seen live: a full IG vs WBG series where every
+// player on both sides was attached to the wrong team, all three games,
+// consistently. The fix is unlikely to be perfect for every naming
+// convention Riot uses across regions, so keep checking for the exact
+// signature going forward: a GameStat whose player handle still carries
+// the OTHER team's code prefix, not the one it's stored under. Detectable
+// cheaply and locally — no external calls needed for the check itself, only
+// for the reprocessing that follows once a bad game is found and requeued.
+const ROSTER_AUDIT_WINDOW_DAYS = 7;
+
+export async function runRosterSwapAudit() {
+  const cutoff = new Date(Date.now() - ROSTER_AUDIT_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const stats = await prisma.gameStat.findMany({
+    where: { game: { match: { startTime: { gte: cutoff } } } },
+    include: { player: true, game: { include: { match: { include: { teamA: true, teamB: true } } } } },
+  });
+
+  const affectedGameIds = new Set<number>();
+  for (const s of stats) {
+    const { teamA, teamB } = s.game.match;
+    const ourCode = s.teamId === teamA.id ? teamA.code : s.teamId === teamB.id ? teamB.code : null;
+    const otherCode = s.teamId === teamA.id ? teamB.code : s.teamId === teamB.id ? teamA.code : null;
+    if (!ourCode || !otherCode) continue;
+    const handle = s.player.handle;
+    if (handle.startsWith(otherCode) && !handle.startsWith(ourCode)) {
+      affectedGameIds.add(s.gameId);
+    }
+  }
+
+  if (affectedGameIds.size === 0) return { requeued: 0 };
+
+  // Wipe the (wrong) stats and cached team-level fields for these games and
+  // reset statsChecked so runGamesIngest's normal pass redoes them from
+  // scratch with the corrected logic, rather than trying to patch rows
+  // in place here.
+  await prisma.gameStat.deleteMany({ where: { gameId: { in: [...affectedGameIds] } } });
+  await prisma.game.updateMany({
+    where: { id: { in: [...affectedGameIds] } },
+    data: {
+      statsChecked: false,
+      teamADragons: null,
+      teamBDragons: null,
+      teamABarons: null,
+      teamBBarons: null,
+      teamAGold: null,
+      teamBGold: null,
+    },
+  });
+  console.log(`[audit] requeued ${affectedGameIds.size} game(s) with team-swapped rosters for reprocessing.`);
+  return { requeued: affectedGameIds.size };
+}

@@ -13,10 +13,17 @@ import { pathToFileURL } from "node:url";
 import { prisma } from "../lib/prisma.ts";
 import { getEventDetails, getGameWindow, getGameDetails } from "../lib/lolEsports.ts";
 
-// Strip a leading team-code prefix: "T1 Doran" -> "Doran".
+// Strip a leading team-code prefix: "T1 Doran" -> "Doran". Not every region
+// separates the two with a space — seen live in LPL data, "WBGZika" with no
+// separator at all — so try the space-separated form first (safer/exact),
+// then fall back to the bare-prefix form.
 function cleanHandle(summonerName: string, teamCode: string): string {
-  const prefix = `${teamCode} `;
-  return summonerName.startsWith(prefix) ? summonerName.slice(prefix.length) : summonerName;
+  const withSpace = `${teamCode} `;
+  if (summonerName.startsWith(withSpace)) return summonerName.slice(withSpace.length);
+  if (summonerName.startsWith(teamCode) && summonerName.length > teamCode.length) {
+    return summonerName.slice(teamCode.length);
+  }
+  return summonerName;
 }
 
 // Not every participant has an esportsPlayerId (subs, unregistered players). Fall
@@ -127,7 +134,40 @@ export async function runGamesIngest(options: { limit?: number; force?: boolean 
 
       // Team-level objectives/gold, keyed to teamA/teamB (not blue/red — sides
       // swap between games in a series, but which team is "A" doesn't).
-      const teamAIsBlue = ourTeamIdBySide.blue === match.teamAId;
+      //
+      // Which physical team is "blue" for THIS game is determined two
+      // different ways in this codebase: getEventDetails' g.teams (used
+      // above for ourTeamIdBySide) and this live-stats feed's own
+      // blue/red-labeled rosters — and they are two independent Riot
+      // services with no guarantee they agree. Seen live: a full IG vs WBG
+      // series where every player on both sides ended up attached to the
+      // WRONG team for all three games, in a way that was completely
+      // consistent (not random) — the unmistakable signature of these two
+      // endpoints disagreeing about which side was blue.
+      //
+      // Prefer a signal that's self-consistent within THIS SAME feed
+      // instead: pro summoner names are conventionally prefixed with their
+      // team's code ("WBG Zika"), so check which side's names actually
+      // match teamA's vs teamB's code and go with the majority. Only fall
+      // back to the cross-endpoint side comparison when no name on either
+      // side carries a recognizable prefix (some leagues don't follow the
+      // convention) — better than nothing, but this is exactly the
+      // unreliable path that produced the swap above.
+      // No space required — seen live, this feed's summonerName carries the
+      // team code with no separator at all ("WBGZika", not "WBG Zika").
+      const countCodeMatches = (names: string[], code: string) => names.filter((n) => n.startsWith(code)).length;
+      const blueNames = win.gameMetadata.blueTeamMetadata.participantMetadata.map((m) => m.summonerName);
+      const redNames = win.gameMetadata.redTeamMetadata.participantMetadata.map((m) => m.summonerName);
+      const blueForA = countCodeMatches(blueNames, match.teamA.code);
+      const blueForB = countCodeMatches(blueNames, match.teamB.code);
+      const redForA = countCodeMatches(redNames, match.teamA.code);
+      const redForB = countCodeMatches(redNames, match.teamB.code);
+      const nameSignalStrength = blueForA + blueForB + redForA + redForB;
+      const teamAIsBlue =
+        nameSignalStrength > 0 ? blueForA + redForB >= blueForB + redForA : ourTeamIdBySide.blue === match.teamAId;
+      const resolvedTeamIdBySide: Record<"blue" | "red", number> = teamAIsBlue
+        ? { blue: match.teamAId, red: match.teamBId }
+        : { blue: match.teamBId, red: match.teamAId };
       const teamAObjectives = teamAIsBlue ? lastFrame.blueTeam : lastFrame.redTeam;
       const teamBObjectives = teamAIsBlue ? lastFrame.redTeam : lastFrame.blueTeam;
       await prisma.game.update({
@@ -169,7 +209,7 @@ export async function runGamesIngest(options: { limit?: number; force?: boolean 
 
       for (const pm of roster) {
         const s = statByPid.get(pm.participantId);
-        const ourTeamId = ourTeamIdBySide[pm.side.toLowerCase()];
+        const ourTeamId = resolvedTeamIdBySide[pm.side.toLowerCase() as "blue" | "red"];
         if (!s || !ourTeamId) continue;
 
         const handle = cleanHandle(pm.summonerName, codeByOurId[ourTeamId] ?? "");
