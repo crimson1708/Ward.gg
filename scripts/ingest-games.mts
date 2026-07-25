@@ -74,6 +74,28 @@ export async function runGamesIngest(options: { limit?: number; force?: boolean 
   let matchesWithStats = 0;
 
   for (const match of todo) {
+    // A single match's data being malformed/missing upstream (seen live:
+    // Riot's API returning a null event for one specific match id) used to
+    // crash this entire run, taking every other match in the same batch
+    // down with it. Catch per-match instead — log it and move on, since the
+    // whole point of the incremental filter is that this match just gets
+    // tried again next run rather than blocking everything else forever.
+    try {
+      await processMatch(match);
+    } catch (err) {
+      console.log(`  ${match.teamA.code} vs ${match.teamB.code} — failed: ${err}`);
+    }
+  }
+
+  console.log(`\nGames upserted: ${gamesUpserted}`);
+  console.log(`Stat rows upserted: ${statsUpserted}`);
+  console.log(`Matches with stats (this run): ${matchesWithStats}/${todo.length}`);
+  const playerCount = await prisma.player.count();
+  console.log(`Players in DB now: ${playerCount}`);
+
+  return { gamesUpserted, statsUpserted, matchesWithStats, totalToProcess: todo.length, players: playerCount };
+
+  async function processMatch(match: (typeof todo)[number]) {
     const details = await getEventDetails(match.externalId);
 
     // Map the API's team id -> OUR team id, by matching the 3-letter code
@@ -246,14 +268,6 @@ export async function runGamesIngest(options: { limit?: number; force?: boolean 
     if (matchHadStats) matchesWithStats++;
     console.log(`  ${match.teamA.code} vs ${match.teamB.code} — ${matchHadStats ? "stats ✓" : "no feed"}`);
   }
-
-  console.log(`\nGames upserted: ${gamesUpserted}`);
-  console.log(`Stat rows upserted: ${statsUpserted}`);
-  console.log(`Matches with stats (this run): ${matchesWithStats}/${todo.length}`);
-  const playerCount = await prisma.player.count();
-  console.log(`Players in DB now: ${playerCount}`);
-
-  return { gamesUpserted, statsUpserted, matchesWithStats, totalToProcess: todo.length, players: playerCount };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

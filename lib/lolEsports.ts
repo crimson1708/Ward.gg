@@ -90,7 +90,16 @@ export async function getEventDetails(
   matchId: string
 ): Promise<{ teams: ApiEventTeam[]; games: ApiGame[] }> {
   const data = await get(`getEventDetails?hl=en-US&id=${matchId}`);
-  const m = data.data.event.match;
+  // Seen live: the API can return a 200 with data.event itself null for a
+  // specific match id (crashed the entire refresh pipeline on an unguarded
+  // access here — one broken match took down every other match's processing
+  // in the same run too). A clear, catchable error lets callers skip just
+  // this one match instead.
+  const event = data?.data?.event;
+  if (!event?.match) {
+    throw new Error(`getEventDetails: no event data for match ${matchId}`);
+  }
+  const m = event.match;
   return { teams: m.teams, games: m.games };
 }
 
