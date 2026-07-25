@@ -1,0 +1,43 @@
+{
+  "version": "16.14.1",
+  "names": {
+    "1": "Cleanse",
+    "3": "Exhaust",
+    "4": "Flash",
+    "6": "Ghost",
+    "7": "Heal",
+    "11": "Smite",
+    "12": "Teleport",
+    "13": "Clarity",
+    "14": "Ignite",
+    "21": "Barrier",
+    "30": "To the King!",
+    "31": "Poro Toss",
+    "32": "Mark",
+    "39": "Mark",
+    "54": "Placeholder",
+    "55": "Placeholder and Attack-Smite",
+    "2201": "Flee",
+    "2202": "Flash"
+  },
+  "icons": {
+    "1": "SummonerBoost.png",
+    "3": "SummonerExhaust.png",
+    "4": "SummonerFlash.png",
+    "6": "SummonerHaste.png",
+    "7": "SummonerHeal.png",
+    "11": "SummonerSmite.png",
+    "12": "SummonerTeleport.png",
+    "13": "SummonerMana.png",
+    "14": "SummonerDot.png",
+    "21": "SummonerBarrier.png",
+    "30": "SummonerPoroRecall.png",
+    "31": "SummonerPoroThrow.png",
+    "32": "SummonerSnowball.png",
+    "39": "SummonerSnowURFSnowball_Mark.png",
+    "54": "Summoner_UltBookPlaceholder.png",
+    "55": "Summoner_UltBookSmitePlaceholder.png",
+    "2201": "SummonerCherryHold.png",
+    "2202": "SummonerCherryFlash.png"
+  }
+}

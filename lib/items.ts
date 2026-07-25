@@ -17,6 +17,16 @@ export function getItemInfo(id: number): ItemInfo | null {
   return { id, name, iconUrl: `https://ddragon.leagueoflegends.com/cdn/${version}/img/item/${id}.png` };
 }
 
+// Leaguepedia's Items/Trinket/RoleBoundItem fields come back as display names
+// ("Infinity Edge", "Farsight Alteration") — the reverse of `names`, for
+// converting those back to a ddragon id at ingest time.
+const idByName: Record<string, number> = {};
+for (const [id, name] of Object.entries(names)) idByName[name.toLowerCase()] = Number(id);
+
+export function getItemIdByName(name: string): number | null {
+  return idByName[name.trim().toLowerCase()] ?? null;
+}
+
 // Every boots id Data Dragon tags "Boots" (base, upgraded/enchanted like
 // Swiftmarch, and their legacy "223xxx" duplicates) — deliberately excludes
 // the junk "Healthbar Splash" cosmetic entries that also carry the tag.

@@ -168,6 +168,15 @@ model GameStat {
   items      String? // comma-separated item ids, final build order, from the /details feed
   keystone     Int? // primary keystone perk id — perkMetadata.perks[0] from the /details feed
   secondaryTree Int? // secondary rune tree id — perkMetadata.subStyleId from the /details feed
+  summonerSpells String? // comma-separated spell ids, e.g. "4,14" — Riot's feed never carries this, Leaguepedia-only
+  // Set once we've attempted to match this player-game against Leaguepedia's
+  // per-player scoreboard data, whether a match was found or not — same
+  // "checked, not necessarily found" idea as Game.statsChecked, so a
+  // no-match doesn't get retried every single run. When a match IS found,
+  // Leaguepedia's items/runes overwrite the feed-derived ones above (its
+  // human-curated final build is more complete — final wards, boots, and
+  // support items are exactly what the live-stats snapshot tends to miss).
+  leaguepediaChecked Boolean @default(false)
 
   // A player only appears once per game, so this pair is unique — again enables
   // safe upserts during ingestion.

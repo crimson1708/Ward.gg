@@ -12,6 +12,7 @@
 const CARGO_ENDPOINT = "https://lol.fandom.com/api.php";
 
 export interface LeaguepediaGame {
+  gameId: string | null; // ScoreboardGames' own row id — join key into ScoreboardPlayers
   team1Bans: string[]; // champion display names, e.g. "Wukong"
   team2Bans: string[];
   team1VoidGrubs: number;
@@ -69,7 +70,7 @@ export async function findLeaguepediaGame(
     action: "cargoquery",
     tables: "ScoreboardGames",
     fields:
-      "Team1,Team2,Team1Bans,Team2Bans,Team1VoidGrubs,Team2VoidGrubs,Team1RiftHeralds,Team2RiftHeralds,N_GameInMatch",
+      "Team1,Team2,Team1Bans,Team2Bans,Team1VoidGrubs,Team2VoidGrubs,Team1RiftHeralds,Team2RiftHeralds,N_GameInMatch,GameId",
     where,
     format: "json",
     limit: "20",
@@ -111,11 +112,13 @@ export async function findLeaguepediaGame(
   const rawTeam2Grubs = Number(getField(row.title, "Team2VoidGrubs")) || 0;
   const rawTeam1Heralds = Number(getField(row.title, "Team1RiftHeralds")) || 0;
   const rawTeam2Heralds = Number(getField(row.title, "Team2RiftHeralds")) || 0;
+  const gameId = getField(row.title, "GameId") || null;
 
   return {
     ok: true,
     game: team1IsOurTeam1
       ? {
+          gameId,
           team1Bans: rawTeam1Bans,
           team2Bans: rawTeam2Bans,
           team1VoidGrubs: rawTeam1Grubs,
@@ -124,6 +127,7 @@ export async function findLeaguepediaGame(
           team2RiftHeralds: rawTeam2Heralds,
         }
       : {
+          gameId,
           team1Bans: rawTeam2Bans,
           team2Bans: rawTeam1Bans,
           team1VoidGrubs: rawTeam2Grubs,
@@ -132,4 +136,70 @@ export async function findLeaguepediaGame(
           team2RiftHeralds: rawTeam1Heralds,
         },
   };
+}
+
+export interface LeaguepediaPlayerRow {
+  team: string; // this player's own team name, as Leaguepedia has it
+  champion: string; // display name, e.g. "Lee Sin" — match against our own GameStat.champion via getChampionIdByName
+  items: string[]; // display names, final build, NOT including trinket/role-bound item (those are separate fields below)
+  trinket: string | null;
+  roleBoundItem: string | null; // support/jungle item line Riot's own feed sometimes misses
+  summonerSpells: string[]; // display names, e.g. ["Flash", "Ignite"]
+  primaryTree: string | null;
+  secondaryTree: string | null;
+  keystoneRune: string | null;
+}
+
+export type LeaguepediaPlayersResult =
+  | { ok: true; players: LeaguepediaPlayerRow[] } // empty array = query succeeded, nothing found for this id
+  | { ok: false; rateLimited: boolean };
+
+// All 10 players for one specific game, keyed by the GameId a prior
+// findLeaguepediaGame call already resolved — a direct id lookup, not a
+// best-effort name/date match, so this is exact once you have a valid id.
+export async function findLeaguepediaPlayers(gameId: string): Promise<LeaguepediaPlayersResult> {
+  const params = new URLSearchParams({
+    action: "cargoquery",
+    tables: "ScoreboardPlayers",
+    fields: "Team,Champion,Items,Trinket,RoleBoundItem,SummonerSpells,PrimaryTree,SecondaryTree,KeystoneRune",
+    where: `GameId="${escapeCargoString(gameId)}"`,
+    format: "json",
+    limit: "10",
+  });
+
+  let res: Response;
+  try {
+    res = await fetch(`${CARGO_ENDPOINT}?${params}`, {
+      headers: { "User-Agent": "WardLoLStatsBot/1.0 (hobby project; contact via GitHub issues)" },
+    });
+  } catch {
+    return { ok: false, rateLimited: false };
+  }
+  if (!res.ok) return { ok: false, rateLimited: false };
+
+  const json = await res.json();
+  if (json.error) {
+    return { ok: false, rateLimited: json.error.code === "ratelimited" };
+  }
+
+  const splitList = (s: string) =>
+    s
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+
+  const rows: { title: Record<string, string> }[] = json.cargoquery ?? [];
+  const players: LeaguepediaPlayerRow[] = rows.map((r) => ({
+    team: getField(r.title, "Team"),
+    champion: getField(r.title, "Champion"),
+    items: splitList(getField(r.title, "Items")),
+    trinket: getField(r.title, "Trinket") || null,
+    roleBoundItem: getField(r.title, "RoleBoundItem") || null,
+    summonerSpells: splitList(getField(r.title, "SummonerSpells")),
+    primaryTree: getField(r.title, "PrimaryTree") || null,
+    secondaryTree: getField(r.title, "SecondaryTree") || null,
+    keystoneRune: getField(r.title, "KeystoneRune") || null,
+  }));
+
+  return { ok: true, players };
 }
