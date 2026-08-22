@@ -30,23 +30,32 @@ export async function runStaleReconciliation() {
 
   let fixed = 0;
   for (const match of candidates) {
-    const details = await getEventDetails(match.externalId);
-    if (!details.games.length) continue;
+    // Same lesson as ingest-games.mts: one match's data being malformed
+    // upstream (getEventDetails throwing on a null event) used to crash this
+    // entire function -- and since `npm run refresh` chains scripts with
+    // `&&`, that took ingest-games.mts and ingest-news.mts down with it too,
+    // failing every scheduled GitHub Actions run until someone noticed.
+    try {
+      const details = await getEventDetails(match.externalId);
+      if (!details.games.length) continue;
 
-    const resolved = details.games.every((g) => g.state === "completed" || g.state === "unneeded");
-    if (!resolved) continue;
+      const resolved = details.games.every((g) => g.state === "completed" || g.state === "unneeded");
+      if (!resolved) continue;
 
-    const winsByCode = new Map(details.teams.map((t) => [t.code, t.result?.gameWins ?? 0]));
-    const scoreA = winsByCode.get(match.teamA.code) ?? 0;
-    const scoreB = winsByCode.get(match.teamB.code) ?? 0;
-    const winnerTeamId = scoreA > scoreB ? match.teamAId : scoreB > scoreA ? match.teamBId : null;
+      const winsByCode = new Map(details.teams.map((t) => [t.code, t.result?.gameWins ?? 0]));
+      const scoreA = winsByCode.get(match.teamA.code) ?? 0;
+      const scoreB = winsByCode.get(match.teamB.code) ?? 0;
+      const winnerTeamId = scoreA > scoreB ? match.teamAId : scoreB > scoreA ? match.teamBId : null;
 
-    await prisma.match.update({
-      where: { id: match.id },
-      data: { status: "completed", scoreA, scoreB, winnerTeamId },
-    });
-    fixed++;
-    console.log(`  fixed: ${match.teamA.code} vs ${match.teamB.code} (${match.startTime.toISOString()}) -> ${scoreA}-${scoreB}`);
+      await prisma.match.update({
+        where: { id: match.id },
+        data: { status: "completed", scoreA, scoreB, winnerTeamId },
+      });
+      fixed++;
+      console.log(`  fixed: ${match.teamA.code} vs ${match.teamB.code} (${match.startTime.toISOString()}) -> ${scoreA}-${scoreB}`);
+    } catch (err) {
+      console.log(`  ${match.teamA.code} vs ${match.teamB.code} — failed: ${err}`);
+    }
   }
 
   console.log(`Reconciled ${fixed} match(es). (Their games/stats will be picked up by the next ingest:games run.)`);
