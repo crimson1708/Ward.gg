@@ -11,7 +11,7 @@
 
 import { pathToFileURL } from "node:url";
 import { prisma } from "../lib/prisma.ts";
-import { getEventDetails, getGameWindow, getGameDetails } from "../lib/lolEsports.ts";
+import { getEventDetails, getGameWindow, getGameDetails, inferGameWinner, shortPatch } from "../lib/lolEsports.ts";
 
 // Strip a leading team-code prefix: "T1 Doran" -> "Doran". Not every region
 // separates the two with a space — seen live in LPL data, "WBGZika" with no
@@ -32,6 +32,12 @@ function playerKey(esportsPlayerId: string | undefined, summonerName: string): s
   if (esportsPlayerId && esportsPlayerId !== "0") return esportsPlayerId;
   return "sn:" + summonerName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }
+
+// How long a completed game is given to produce a "finished" frame before we
+// stop re-probing it. Comfortably longer than the lag between a match being
+// marked completed and its last game's feed catching up, but short enough that
+// permanently broken games stop costing an offset ladder on every run.
+const NO_FINAL_FRAME_GRACE_MS = 2 * 24 * 60 * 60 * 1000;
 
 // Default is INCREMENTAL — we skip matches whose games have all already been
 // CHECKED (statsChecked, set regardless of whether a feed was actually found —
@@ -143,12 +149,25 @@ export async function runGamesIngest(options: { limit?: number; force?: boolean 
       const { data: win, startingTime } = winResult;
       matchHadStats = true;
 
-      // Prefer the frame where the game is actually reported "finished" — the
-      // array's last element is usually that frame, but fall back to it
-      // explicitly in case getGameWindow had to settle for a best-effort,
-      // still-in-progress response (see the ladder/fallback logic there).
-      const lastFrame =
-        [...win.frames].reverse().find((f) => f.gameState === "finished") ?? win.frames[win.frames.length - 1];
+      // ONLY a frame the feed reports as "finished" is usable as a final box
+      // score. getGameWindow can hand back a best-effort mid-game response
+      // (see its ladder/fallback), and storing that produces numbers that look
+      // real but describe the opening minutes: seen live, a completed game
+      // saved with 0/0/0 K/D/A, 17 CS and ~15k combined team gold, which then
+      // silently dragged down every average that game fed into.
+      //
+      // Missing a final frame is usually a timing problem, not a permanent
+      // one — the game simply hadn't finished when we asked — so leave the
+      // game unchecked and let a later run pick it up. Past the grace period
+      // a final frame is never going to appear, and continuing to re-probe an
+      // old game every run would cost an offset ladder each time for nothing.
+      const finalFrame = [...win.frames].reverse().find((f) => f.gameState === "finished");
+      if (!finalFrame) {
+        const tooOldToRetry = Date.now() - match.startTime.getTime() > NO_FINAL_FRAME_GRACE_MS;
+        await prisma.game.update({ where: { id: gameRow.id }, data: { statsChecked: tooOldToRetry } });
+        continue;
+      }
+      const lastFrame = finalFrame;
       const statByPid = new Map<number, (typeof lastFrame.blueTeam.participants)[number]>();
       for (const p of [...lastFrame.blueTeam.participants, ...lastFrame.redTeam.participants]) {
         statByPid.set(p.participantId, p);
@@ -192,6 +211,12 @@ export async function runGamesIngest(options: { limit?: number; force?: boolean 
         : { blue: match.teamBId, red: match.teamAId };
       const teamAObjectives = teamAIsBlue ? lastFrame.blueTeam : lastFrame.redTeam;
       const teamBObjectives = teamAIsBlue ? lastFrame.redTeam : lastFrame.blueTeam;
+
+      // Safe to read the winner straight off this frame now that only a
+      // genuinely finished one gets this far.
+      const winnerTeamId =
+        inferGameWinner(teamAObjectives, teamBObjectives) === "a" ? match.teamAId : match.teamBId;
+
       await prisma.game.update({
         where: { id: gameRow.id },
         data: {
@@ -201,6 +226,8 @@ export async function runGamesIngest(options: { limit?: number; force?: boolean 
           teamBBarons: teamBObjectives.barons,
           teamAGold: teamAObjectives.totalGold,
           teamBGold: teamBObjectives.totalGold,
+          patch: shortPatch(win.gameMetadata.patchVersion),
+          winnerTeamId,
           statsChecked: true,
         },
       });

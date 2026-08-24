@@ -10,7 +10,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { runLeagueSync } from "@/scripts/ingest.mts";
-import { runStatsRecheckAudit, runRosterSwapAudit } from "@/scripts/audit.mts";
+import { runStatsRecheckAudit, runRosterSwapAudit, runMidGameSnapshotAudit } from "@/scripts/audit.mts";
 import { checkRefreshSecret } from "@/lib/refreshAuth.ts";
 
 export const runtime = "nodejs";
@@ -32,7 +32,8 @@ export async function GET(req: NextRequest) {
     // cost bounded while still catching problems same-day.
     const recheck = await runStatsRecheckAudit();
     const rosterSwaps = await runRosterSwapAudit();
-    return NextResponse.json({ ok: true, tookMs: Date.now() - startedAt, schedule, recheck, rosterSwaps });
+    const midGame = await runMidGameSnapshotAudit();
+    return NextResponse.json({ ok: true, tookMs: Date.now() - startedAt, schedule, recheck, rosterSwaps, midGame });
   } catch (err) {
     return NextResponse.json(
       { ok: false, tookMs: Date.now() - startedAt, error: String(err) },

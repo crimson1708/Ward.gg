@@ -11,7 +11,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { runMatchScheduleSync } from "@/scripts/ingest.mts";
-import { runDeepAudit } from "@/scripts/audit.mts";
+import { runDeepAudit, runGameWinnerReconciliation } from "@/scripts/audit.mts";
 import { checkRefreshSecret } from "@/lib/refreshAuth.ts";
 
 export const runtime = "nodejs";
@@ -26,7 +26,11 @@ export async function GET(req: NextRequest) {
   try {
     const schedule = await runMatchScheduleSync();
     const audit = await runDeepAudit();
-    return NextResponse.json({ ok: true, tookMs: Date.now() - startedAt, schedule, audit });
+    // Runs after the deep audit on purpose: that step can correct a series
+    // score against Riot's live data, and this one holds the per-game winners
+    // to whatever score we end up believing.
+    const winners = await runGameWinnerReconciliation();
+    return NextResponse.json({ ok: true, tookMs: Date.now() - startedAt, schedule, audit, winners });
   } catch (err) {
     return NextResponse.json(
       { ok: false, tookMs: Date.now() - startedAt, error: String(err) },

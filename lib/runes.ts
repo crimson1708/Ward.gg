@@ -1,6 +1,6 @@
 import runeData from "./rune-data.json";
 
-const { version, names, icons } = runeData as {
+const { names, icons } = runeData as {
   version: string;
   names: Record<string, string>;
   icons: Record<string, string>;

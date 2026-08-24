@@ -68,6 +68,7 @@ model Player {
   realName   String?
   role       String? // top | jungle | mid | bottom | support
   country    String?
+  imageUrl   String? // headshot from the esports API; often a shared "default-headshot.png" placeholder
   // A player's CURRENT team. Nullable because free agents exist. Historical
   // team-per-game is recoverable from GameStat below.
   team       Team?      @relation(fields: [teamId], references: [id])

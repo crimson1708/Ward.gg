@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { NewsCard } from "@/app/components/NewsCard";
 import { SidebarMatchRow } from "@/app/components/SidebarMatchRow";
@@ -94,9 +95,9 @@ export default async function Home() {
           ) : (
             <p className="empty">No live or upcoming matches right now.</p>
           )}
-          <a className="view-all-link" href="/matches">
+          <Link className="view-all-link" href="/matches">
             All matches →
-          </a>
+          </Link>
         </div>
 
         <div className="sidebar-panel">

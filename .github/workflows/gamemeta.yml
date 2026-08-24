@@ -1,0 +1,36 @@
+name: Game metadata backfill
+
+# Per-game durations for CS/min and gold/min, plus winners for any game the
+# main ingest couldn't resolve inline. The duration lookup is a ~10-request
+# binary search per game (see lib/lolEsports.ts findGameStartMs), far too slow
+# for the refresh cadence, so it runs here on its own bounded schedule.
+on:
+  schedule:
+    - cron: "30 */3 * * *"
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Number of games to process this run"
+        required: false
+        default: "150"
+
+concurrency:
+  group: gamemeta
+  cancel-in-progress: false
+
+jobs:
+  gamemeta:
+    runs-on: ubuntu-latest
+    env:
+      TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+      TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - run: npx tsx scripts/ingest-gamemeta.mts ${{ github.event.inputs.limit || '150' }}

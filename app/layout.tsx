@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
@@ -29,12 +30,13 @@ export default function RootLayout({
         {/* The header lives in the layout, so it renders on every page. */}
         <header className="site-header">
           <div className="inner">
-            <a href="/" className="brand">
+            <Link href="/" className="brand">
               Ward
-            </a>
+            </Link>
             <nav className="site-nav">
-              <a href="/matches">Matches</a>
-              <a href="/news">News</a>
+              <Link href="/matches">Matches</Link>
+              <Link href="/players">Players</Link>
+              <Link href="/news">News</Link>
             </nav>
           </div>
         </header>

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getChampionInfo } from "@/lib/champions";
 import { getItemInfo, arrangeItemSlots } from "@/lib/items";
 import { getRuneInfo } from "@/lib/runes";
@@ -14,7 +15,10 @@ export type StatRow = {
   assists: number;
   creepScore: number;
   totalGold: number;
-  player: { handle: string };
+  // The player's own id, carried separately from `id` above: that one is the
+  // GameStat id per game, but the combined "All Matches" row keys off the
+  // player instead, so only this field is reliably a player id in both shapes.
+  player: { id: number; handle: string };
 };
 
 export function BoxScore({ teamName, side, rows }: { teamName: string; side?: string | null; rows: StatRow[] }) {
@@ -46,7 +50,9 @@ export function BoxScore({ teamName, side, rows }: { teamName: string; side?: st
         {rows.map((s) => (
           <tr key={s.id}>
             <td>
-              <div>{s.player.handle}</div>
+              <Link className="boxscore-player" href={`/players/${s.player.id}`}>
+                {s.player.handle}
+              </Link>
               <div className="role">{s.role}</div>
             </td>
             <td>

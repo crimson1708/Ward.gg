@@ -36,6 +36,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# personal AI context, not for sharing
+CLAUDE.md
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

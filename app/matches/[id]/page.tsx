@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { MatchTabs, type MapTab } from "@/app/components/MatchTabs";
 import type { StatRow } from "@/app/components/BoxScore";
@@ -58,7 +59,7 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
       assists: s.assists,
       creepScore: s.creepScore,
       totalGold: s.totalGold,
-      player: { handle: s.player.handle },
+      player: { id: s.playerId, handle: s.player.handle },
     }));
     // Every player on a team shares the same side for a given game.
     const teamASide = game.stats.find((s) => s.teamId === teamA.id)?.side ?? null;
@@ -107,9 +108,9 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
 
   return (
     <main className="container">
-      <a className="back-link" href="/matches">
+      <Link className="back-link" href="/matches">
         ← All matches
-      </a>
+      </Link>
 
       <div className="match-header">
         <div className="side" style={{ opacity: decided && match.winnerTeamId !== teamA.id ? 0.5 : 1 }}>
@@ -222,7 +223,7 @@ function aggregateAcrossGames(games: CompletedGame[], teamAId: number, teamBId: 
     assists: a.assists,
     creepScore: a.creepScore,
     totalGold: a.totalGold,
-    player: { handle: a.handle },
+    player: { id: playerId, handle: a.handle },
   }));
 
   return {

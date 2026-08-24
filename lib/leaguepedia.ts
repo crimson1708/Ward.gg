@@ -203,3 +203,60 @@ export async function findLeaguepediaPlayers(gameId: string): Promise<Leaguepedi
 
   return { ok: true, players };
 }
+
+export interface LeaguepediaPlayerProfile {
+  /** Leaguepedia's own player id, which is the in-game handle. */
+  id: string;
+  country: string | null; // full English name, e.g. "South Korea"
+}
+
+export type LeaguepediaProfilesResult =
+  | { ok: true; profiles: LeaguepediaPlayerProfile[] }
+  | { ok: false; rateLimited: boolean };
+
+// Country of origin for a batch of players, looked up by handle.
+//
+// This is the ONLY source we have for a player's country — the esports API's
+// roster endpoint carries names and headshots but no nationality at all.
+//
+// Batched by handle rather than queried one player at a time: Leaguepedia
+// rate-limits hard on bursts, and an IN(...) clause turns ~1300 players into a
+// couple of dozen requests. Matching is on Leaguepedia's `ID`, which IS the
+// in-game handle, so this is a direct lookup — but handles are only unique on
+// their side, and a player who has since renamed may not match at all. A miss
+// is a normal outcome, not an error.
+export async function findLeaguepediaProfiles(handles: string[]): Promise<LeaguepediaProfilesResult> {
+  if (handles.length === 0) return { ok: true, profiles: [] };
+
+  const list = handles.map((h) => `"${escapeCargoString(h)}"`).join(",");
+  const params = new URLSearchParams({
+    action: "cargoquery",
+    tables: "Players",
+    fields: "ID,Country",
+    where: `ID IN (${list})`,
+    format: "json",
+    limit: String(Math.max(handles.length * 2, 50)),
+  });
+
+  let res: Response;
+  try {
+    res = await fetch(`${CARGO_ENDPOINT}?${params}`, {
+      headers: { "User-Agent": "WardLoLStatsBot/1.0 (hobby project; contact via GitHub issues)" },
+    });
+  } catch {
+    return { ok: false, rateLimited: false };
+  }
+  if (!res.ok) return { ok: false, rateLimited: false };
+
+  const json = await res.json();
+  if (json.error) return { ok: false, rateLimited: json.error.code === "ratelimited" };
+
+  const rows: { title: Record<string, string> }[] = json.cargoquery ?? [];
+  return {
+    ok: true,
+    profiles: rows.map((r) => ({
+      id: getField(r.title, "ID"),
+      country: getField(r.title, "Country") || null,
+    })),
+  };
+}
