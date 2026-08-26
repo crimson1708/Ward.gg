@@ -21,7 +21,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
-      - run: npm ci
+      # npm dies mid-install often enough to matter at this cadence — usually
+      # "Exit handler never called!" or a registry timeout. That's an npm/network
+      # fault rather than a broken build, but it still fails the run and mails a
+      # failure notice, so retry before believing it. `cache: npm` above keeps
+      # most of the install off the network in the first place.
+      - name: Install dependencies
+        run: |
+          for attempt in 1 2 3; do
+            npm ci && exit 0
+            echo "npm ci failed (attempt $attempt) - retrying in $((attempt * 15))s"
+            sleep $((attempt * 15))
+          done
+          exit 1
 
       - run: npm run refresh

@@ -11,7 +11,23 @@ const ESPORTS = "https://esports-api.lolesports.com/persisted/gw";
 // whole batch (and its caller's request timeout) hostage.
 const REQUEST_TIMEOUT_MS = 8000;
 
-async function get(path: string) {
+// The refresh workflow runs every 15 minutes and makes dozens of these calls
+// per run, so "rare" transport faults are a near-daily event: a single
+// `read ECONNRESET` partway through a run used to abort the whole pipeline and
+// mail out a failure notice. Retry the faults that are actually worth
+// retrying — dropped connections, timeouts, 429 and 5xx — and let a genuine
+// 4xx through on the first attempt, since that won't fix itself.
+const MAX_ATTEMPTS = 3;
+const RETRY_BASE_MS = 500;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Marks the responses where retrying is pointless, so the retry loop below can
+// treat everything else — including the TypeErrors fetch throws for transport
+// failures and the AbortError from our own timeout — as worth another go.
+class FatalHttpError extends Error {}
+
+async function getOnce(path: string) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -20,12 +36,31 @@ async function get(path: string) {
       signal: controller.signal,
     });
     if (!res.ok) {
-      throw new Error(`LoL Esports API ${path} failed: ${res.status} ${res.statusText}`);
+      const message = `LoL Esports API ${path} failed: ${res.status} ${res.statusText}`;
+      if (res.status === 429 || res.status >= 500) throw new Error(message);
+      throw new FatalHttpError(message);
     }
     return await res.json();
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function get(path: string) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      return await getOnce(path);
+    } catch (err) {
+      if (err instanceof FatalHttpError) throw err;
+      lastError = err;
+      if (attempt < MAX_ATTEMPTS) {
+        console.warn(`LoL Esports API ${path} attempt ${attempt} failed (${err}) — retrying`);
+        await sleep(RETRY_BASE_MS * 2 ** (attempt - 1));
+      }
+    }
+  }
+  throw lastError;
 }
 
 // ── Types describing ONLY the fields we actually use (from the raw JSON we
@@ -372,7 +407,15 @@ export interface GameDetails {
 }
 
 export async function getGameDetails(gameId: string, startingTime: string): Promise<GameDetails | null> {
-  const res = await fetch(`${FEED}/details/${gameId}?startingTime=${startingTime}`);
+  // Every other failure mode here degrades to null; an unguarded fetch left a
+  // dropped connection to the feed host as the one way this could instead
+  // throw and take the whole run down with it.
+  let res: Response;
+  try {
+    res = await fetch(`${FEED}/details/${gameId}?startingTime=${startingTime}`);
+  } catch {
+    return null;
+  }
   if (!res.ok) return null;
   const text = await res.text();
   try {
